@@ -6,8 +6,9 @@
  *   v_left  = throttle - steering
  *   v_right = throttle + steering
  *
- * 差速转向: 一边快一边慢 → 转弯
- *原地转向: throttle=0, steering≠0 → 一边正转一边反转
+ * 自动适配 DC 和 ESC 两种电机:
+ *   DC  模式: motor_set 传 -pwm_range ~ +pwm_range
+ *   ESC 模式: motor_set 传 -1.0 ~ +1.0
  */
 
 #include "ctrl/diff_drive.h"
@@ -23,6 +24,15 @@ static float clampf(float v, float lo, float hi)
     return v;
 }
 
+/* 判断是否全部为 ESC 模式 */
+static bool all_esc(const diff_drive_t *dd)
+{
+    for (int i = 0; i < DIFF_DRIVE_NUM_MOTORS; i++) {
+        if (dd->motors[i].type != MOTOR_TYPE_ESC) return false;
+    }
+    return true;
+}
+
 int diff_drive_init(diff_drive_t *dd, motor_t motors[DIFF_DRIVE_NUM_MOTORS])
 {
     for (int i = 0; i < DIFF_DRIVE_NUM_MOTORS; i++) {
@@ -35,12 +45,11 @@ int diff_drive_init(diff_drive_t *dd, motor_t motors[DIFF_DRIVE_NUM_MOTORS])
     dd->use_pid   = false;
     dd->enabled   = false;
 
-    /* 速度环 PID 暂不启用，等有编码器再开 */
     pid_init(&dd->pid_speed,
              CFG_DIFF_SPEED_KP, CFG_DIFF_SPEED_KI, CFG_DIFF_SPEED_KD,
-             5.0f, (float)CFG_MOTOR_PWM_RANGE);
+             5.0f, 1.0f);
 
-    printf("[DIFF_DRIVE] init  4 motors\n");
+    printf("[DIFF_DRIVE] init mode=%s\n", all_esc(dd) ? "ESC" : "DC");
     return 0;
 }
 
@@ -59,25 +68,31 @@ void diff_drive_update(diff_drive_t *dd, float dt)
         return;
     }
 
-    float max_pwm = (float)CFG_MOTOR_PWM_RANGE * dd->max_power;
+    bool is_esc = all_esc(dd);
 
-    /* 差速混合 */
-    float left  = (dd->throttle - dd->steering) * max_pwm;
-    float right = (dd->throttle + dd->steering) * max_pwm;
+    /* 差速混合: left/right 都是 -1~+1 */
+    float left  = dd->throttle - dd->steering;
+    float right = dd->throttle + dd->steering;
 
-    /* 限幅 */
-    left  = clampf(left,  -max_pwm, max_pwm);
-    right = clampf(right, -max_pwm, max_pwm);
+    left  = clampf(left,  -1.0f, 1.0f) * dd->max_power;
+    right = clampf(right, -1.0f, 1.0f) * dd->max_power;
 
-    /* 左侧电机 (前左 + 后左) */
+    if (!is_esc) {
+        /* DC 模式: 乘以 pwm_range */
+        float max_pwm = (float)CFG_MOTOR_PWM_RANGE;
+        left  *= max_pwm;
+        right *= max_pwm;
+    }
+
+    /* 左侧电机 */
     motor_set(&dd->motors[MOTOR_FL], left);
     motor_set(&dd->motors[MOTOR_RL], left);
 
-    /* 右侧电机 (前右 + 后右) */
+    /* 右侧电机 */
     motor_set(&dd->motors[MOTOR_FR], right);
     motor_set(&dd->motors[MOTOR_RR], right);
 
-    (void)dt; /* 开环模式不用 dt */
+    (void)dt;
 }
 
 void diff_drive_brake(diff_drive_t *dd)

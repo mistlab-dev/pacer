@@ -37,23 +37,37 @@
 #define CFG_PCA9685_I2C_BUS       1
 #define CFG_PCA9685_I2C_ADDR      0x40
 
-/* 四轮电机通道 (PCA9685 通道号) */
-/* 前左 */
-#define CFG_MOTOR_FL_A            0
-#define CFG_MOTOR_FL_B            1
-#define CFG_MOTOR_FL_INV          false
-/* 前右 */
-#define CFG_MOTOR_FR_A            2
-#define CFG_MOTOR_FR_B            3
-#define CFG_MOTOR_FR_INV          true
-/* 后左 */
-#define CFG_MOTOR_RL_A            4
-#define CFG_MOTOR_RL_B            5
-#define CFG_MOTOR_RL_INV          false
-/* 后右 */
-#define CFG_MOTOR_RR_A            6
-#define CFG_MOTOR_RR_B            7
-#define CFG_MOTOR_RR_INV          true
+/* ==================== 电机驱动模式 ==================== */
+
+/* 0=DC有刷 (双通道 PCA9685), 1=ESC无刷电调 (单通道) */
+#define CFG_MOTOR_MODE             1
+
+/* ESC 四轮通道 (每个电机只需 1 个 PCA9685 通道) */
+#define CFG_ESC_FL_CH              0
+#define CFG_ESC_FL_INV             false
+#define CFG_ESC_FR_CH              1
+#define CFG_ESC_FR_INV             true
+#define CFG_ESC_RL_CH              2
+#define CFG_ESC_RL_INV             false
+#define CFG_ESC_RR_CH              3
+#define CFG_ESC_RR_INV             true
+
+/* DC 有刷通道 (备用, CFG_MOTOR_MODE=0 时使用) */
+#define CFG_MOTOR_FL_A             0
+#define CFG_MOTOR_FL_B             1
+#define CFG_MOTOR_FL_INV           false
+#define CFG_MOTOR_FR_A             2
+#define CFG_MOTOR_FR_B             3
+#define CFG_MOTOR_FR_INV           true
+#define CFG_MOTOR_RL_A             4
+#define CFG_MOTOR_RL_B             5
+#define CFG_MOTOR_RL_INV           false
+#define CFG_MOTOR_RR_A             6
+#define CFG_MOTOR_RR_B             7
+#define CFG_MOTOR_RR_INV           true
+
+/* PCA9685 频率 — ESC 模式统一用 50Hz (舵机标准频率) */
+#define CFG_PCA9685_PWM_HZ        50
 
 /* ==================== 差速驱动 PID ==================== */
 

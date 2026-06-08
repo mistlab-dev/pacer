@@ -1,13 +1,13 @@
 /**
  * @file app.c
- * @brief 应用层 — 四轮差速驱动
+ * @brief 应用层 — 四轮差速驱动 (ESC/DC 自适应)
  *
  * 运行模式:
  *   1. 正常运行 (APP_MODE_RUN)
- *      → 初始化 PCA9685 + 4电机 → 差速驱动控制循环
+ *      → 初始化 PCA9685 + 4电机 → ESC 校准 → 差速驱动
  *
  *   2. 校准模式 (APP_MODE_CALIBRATE)
- *      → 只初始化 IMU, 校准陀螺仪
+ *      → IMU 校准 或 ESC 校准
  *
  *   3. 调试模式 (APP_MODE_DEBUG)
  *      → 打印姿态数据, 不驱动电机
@@ -47,35 +47,61 @@ static void on_signal(int sig)
     g_running = 0;
 }
 
-/* ================ 构建4个电机 ================ */
-
-#if CFG_MOTOR_PWM_SRC == 1
-#define MOTOR_SRC MOTOR_PWM_PCA9685
-#else
-#define MOTOR_SRC MOTOR_PWM_GPIO
-#endif
+/* ================ 初始化电机 ================ */
 
 static void init_motors(void)
 {
-    motor_init(&g_motors[MOTOR_FL], MOTOR_SRC,
-               CFG_MOTOR_FL_A, CFG_MOTOR_FL_B,
-               CFG_MOTOR_PWM_RANGE, CFG_MOTOR_FL_INV);
-    motor_init(&g_motors[MOTOR_FR], MOTOR_SRC,
-               CFG_MOTOR_FR_A, CFG_MOTOR_FR_B,
-               CFG_MOTOR_PWM_RANGE, CFG_MOTOR_FR_INV);
-    motor_init(&g_motors[MOTOR_RL], MOTOR_SRC,
-               CFG_MOTOR_RL_A, CFG_MOTOR_RL_B,
-               CFG_MOTOR_PWM_RANGE, CFG_MOTOR_RL_INV);
-    motor_init(&g_motors[MOTOR_RR], MOTOR_SRC,
-               CFG_MOTOR_RR_A, CFG_MOTOR_RR_B,
-               CFG_MOTOR_PWM_RANGE, CFG_MOTOR_RR_INV);
+#if CFG_MOTOR_MODE == 1
+    /* ESC 无刷电调模式: 每个电机 1 个信号通道 */
+    motor_init_esc(&g_motors[MOTOR_FL], CFG_ESC_FL_CH, CFG_ESC_FL_INV);
+    motor_init_esc(&g_motors[MOTOR_FR], CFG_ESC_FR_CH, CFG_ESC_FR_INV);
+    motor_init_esc(&g_motors[MOTOR_RL], CFG_ESC_RL_CH, CFG_ESC_RL_INV);
+    motor_init_esc(&g_motors[MOTOR_RR], CFG_ESC_RR_CH, CFG_ESC_RR_INV);
+#else
+    /* DC 有刷电机模式: 每个电机 2 个通道 */
+    motor_init_dc(&g_motors[MOTOR_FL], MOTOR_TYPE_DC_PCA9685,
+                  CFG_MOTOR_FL_A, CFG_MOTOR_FL_B,
+                  CFG_MOTOR_PWM_RANGE, CFG_MOTOR_FL_INV);
+    motor_init_dc(&g_motors[MOTOR_FR], MOTOR_TYPE_DC_PCA9685,
+                  CFG_MOTOR_FR_A, CFG_MOTOR_FR_B,
+                  CFG_MOTOR_PWM_RANGE, CFG_MOTOR_FR_INV);
+    motor_init_dc(&g_motors[MOTOR_RL], MOTOR_TYPE_DC_PCA9685,
+                  CFG_MOTOR_RL_A, CFG_MOTOR_RL_B,
+                  CFG_MOTOR_PWM_RANGE, CFG_MOTOR_RL_INV);
+    motor_init_dc(&g_motors[MOTOR_RR], MOTOR_TYPE_DC_PCA9685,
+                  CFG_MOTOR_RR_A, CFG_MOTOR_RR_B,
+                  CFG_MOTOR_PWM_RANGE, CFG_MOTOR_RR_INV);
+#endif
+}
+
+/* ================ ESC 校准 ================ */
+
+static void esc_arm_all(void)
+{
+#if CFG_MOTOR_MODE == 1
+    printf("[APP] ESC 校准/解锁中...\n");
+    printf("[APP] 发送中位信号 (1500μs), 等待电调响应...\n");
+
+    for (int i = 0; i < DIFF_DRIVE_NUM_MOTORS; i++) {
+        motor_esc_arm(&g_motors[i]);
+    }
+
+    printf("[APP] 等待 3 秒...\n");
+    usleep(3000000);
+
+    printf("[APP] ESC 解锁完成!\n");
+#endif
 }
 
 /* ================ 系统初始化 ================ */
 
 static int sys_init(void)
 {
-    printf("===== Pacer v2.0 — 四轮差速驱动 =====\n");
+#if CFG_MOTOR_MODE == 1
+    printf("===== Pacer v2.0 — 四轮 ESC 差速驱动 =====\n");
+#else
+    printf("===== Pacer v2.0 — 四轮 DC 差速驱动 =====\n");
+#endif
 
     /* HAL */
     if (hal_gpio_init() < 0) {
@@ -83,17 +109,18 @@ static int sys_init(void)
         return -1;
     }
 
-#if CFG_MOTOR_PWM_SRC == 1
     /* PCA9685 初始化 */
     if (hal_pca9685_init(CFG_PCA9685_I2C_BUS, CFG_PCA9685_I2C_ADDR,
-                         CFG_MOTOR_PWM_HZ) != 0) {
+                         CFG_PCA9685_PWM_HZ) != 0) {
         fprintf(stderr, "[APP] PCA9685 init failed\n");
         return -1;
     }
-#endif
 
     /* 电机 */
     init_motors();
+
+    /* ESC 校准 (DC 模式跳过) */
+    esc_arm_all();
 
     /* 差速驱动 */
     diff_drive_init(&g_dd, g_motors);
@@ -107,9 +134,7 @@ static void sys_deinit(void)
 {
     printf("[APP] cleaning up...\n");
     diff_drive_deinit(&g_dd);
-#if CFG_MOTOR_PWM_SRC == 1
     hal_pca9685_deinit();
-#endif
     hal_gpio_deinit();
     printf("[APP] bye\n");
 }
@@ -189,14 +214,10 @@ static int mode_debug(void)
 
 /* ================ 模式: 正常运行 ================ */
 
-/**
- * 简单的键盘遥控 (临时方案)
- * TODO: 后续接入蓝牙手柄 / 手机APP / 自动追踪
- */
 static void parse_keyboard_command(diff_drive_t *dd)
 {
     fd_set fds;
-    struct timeval tv = {0, 0};  /* 非阻塞 */
+    struct timeval tv = {0, 0};
     FD_ZERO(&fds);
     FD_SET(STDIN_FILENO, &fds);
 
@@ -221,10 +242,9 @@ static int mode_run(void)
 {
     if (sys_init() != 0) return -1;
 
-    printf("\n[APP] 四轮差速驱动已启动!\n");
+    printf("\n[APP] 差速驱动已启动!\n");
     printf("[APP] WASD 遥控, 空格=停, X=退出\n\n");
 
-    /* 把 stdin 设为非阻塞 (raw 模式) */
     system("stty -echo -icanon min 0 time 0");
 
     /* === 主控制循环 === */
@@ -235,13 +255,9 @@ static int mode_run(void)
     long interval_us = 1000000L / CFG_DIFF_CONTROL_HZ;
 
     while (g_running) {
-        /* 1. 读取遥控输入 */
         parse_keyboard_command(&g_dd);
-
-        /* 2. 更新电机输出 */
         diff_drive_update(&g_dd, CFG_DIFF_CONTROL_DT);
 
-        /* 3. 控制台日志 (2Hz) */
 #if CFG_ENABLE_CONSOLE_LOG
         if (tick % (CFG_DIFF_CONTROL_HZ / 2) == 0) {
             printf("thr=%+5.2f steer=%+5.2f\n",
@@ -251,7 +267,6 @@ static int mode_run(void)
 
         tick++;
 
-        /* 4. 精确延时 */
         struct timespec t_next = t0;
         long add_ns = (long)tick * interval_us * 1000L;
         t_next.tv_sec  += add_ns / 1000000000L;
@@ -270,9 +285,7 @@ static int mode_run(void)
         }
     }
 
-    /* 恢复终端 */
     system("stty echo icanon");
-
     sys_deinit();
     return 0;
 }

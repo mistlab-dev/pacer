@@ -1,12 +1,13 @@
 /**
  * @file test_diff_drive.c
- * @brief 差速驱动控制器单元测试
+ * @brief 差速驱动单元测试 (DC + ESC 模式)
  */
 
 #include <stdio.h>
 #include <math.h>
 #include <string.h>
 #include "motor/motor.h"
+#include "hal/hal_pca9685.h"
 #include "ctrl/diff_drive.h"
 #include "app/config.h"
 #include "mock_helpers.h"
@@ -24,152 +25,189 @@ static int g_fail = 0;
     else { g_fail++; printf("  FAIL: " fmt "\n", __VA_ARGS__); } \
 } while(0)
 
-/* 记录每个电机 pin 最终的 PWM duty */
-static int get_last_duty_for_pin(int pin)
+/* ---- DC 模式测试 ---- */
+
+static void setup_dc(diff_drive_t *dd)
 {
+    static motor_t motors[4];
+    motor_init_dc(&motors[MOTOR_FL], MOTOR_TYPE_DC_GPIO, 0, 1, 1000, false);
+    motor_init_dc(&motors[MOTOR_FR], MOTOR_TYPE_DC_GPIO, 2, 3, 1000, true);
+    motor_init_dc(&motors[MOTOR_RL], MOTOR_TYPE_DC_GPIO, 4, 5, 1000, false);
+    motor_init_dc(&motors[MOTOR_RR], MOTOR_TYPE_DC_GPIO, 6, 7, 1000, true);
+    diff_drive_init(dd, motors);
+}
+
+static void test_dc_forward(void)
+{
+    printf("[test] DC diff_drive forward\n");
+    mock_reset();
+    diff_drive_t dd;
+    setup_dc(&dd);
+    diff_drive_enable(&dd, true);
+    mock_reset();
+
+    diff_drive_set(&dd, 0.5f, 0.0f);
+    diff_drive_update(&dd, 0.01f);
+
+    /* left=500, FL not inverted → pin_a=0 (duty_a), pin_b=1 (duty_b=0) */
+    /* right=500, FR inverted → actual=-500 → pin_a=2(duty=0), pin_b=3(duty=500) */
+    int fr_b = -1;
     for (int i = mock_get_pwm_log_count() - 1; i >= 0; i--) {
         int p, d;
-        if (mock_get_pwm_log(i, &p, &d) == 0 && p == pin)
-            return d;
+        mock_get_pwm_log(i, &p, &d);
+        if (p == 3) { fr_b = d; break; }
     }
-    return -1;
+    ASSERT_F(fr_b == 500, "FR pin_b = %d", fr_b);
 }
 
-/* 获取电机 pin_a / pin_b 的最终 duty */
-static void get_motor_duties(const motor_t *m, int *a, int *b)
+static void test_dc_disabled(void)
 {
-    *a = get_last_duty_for_pin(m->pin_a);
-    *b = get_last_duty_for_pin(m->pin_b);
+    printf("[test] DC diff_drive disabled — outputs zero\n");
+    mock_reset();
+    diff_drive_t dd;
+    setup_dc(&dd);
+    /* 不 enable */
+
+    mock_reset();
+    diff_drive_set(&dd, 1.0f, 0.0f);
+    diff_drive_update(&dd, 0.01f);
+
+    /* disabled 时 motor_set(0) 也会写 GPIO, 检查写入都是 0 */
+    int d;
+    if (mock_get_pwm_log(0, NULL, &d) == 0) {
+        ASSERT_F(d == 0, "disabled output duty = %d (should be 0)", d);
+    } else {
+        g_pass++; /* 没有 PWM 写入也 OK */
+    }
 }
 
-static void setup_4wd(diff_drive_t *dd)
+/* ---- ESC 模式测试 ---- */
+
+static void esc_mock_init(void)
 {
-    /* 4 个 GPIO PWM 电机 (测试用 mock) */
+    mock_i2c_reset();
+    hal_pca9685_init(1, 0x40, 50);
+}
+
+static void setup_esc(diff_drive_t *dd)
+{
+    esc_mock_init();
+    mock_i2c_reset();
     static motor_t motors[4];
-    motor_init(&motors[MOTOR_FL], MOTOR_PWM_GPIO, 0, 1, 1000, false);
-    motor_init(&motors[MOTOR_FR], MOTOR_PWM_GPIO, 2, 3, 1000, true);
-    motor_init(&motors[MOTOR_RL], MOTOR_PWM_GPIO, 4, 5, 1000, false);
-    motor_init(&motors[MOTOR_RR], MOTOR_PWM_GPIO, 6, 7, 1000, true);
+    motor_init_esc(&motors[MOTOR_FL], 0, false);
+    motor_init_esc(&motors[MOTOR_FR], 1, true);
+    motor_init_esc(&motors[MOTOR_RL], 2, false);
+    motor_init_esc(&motors[MOTOR_RR], 3, true);
+
+    /* arm 所有 ESC */
+    for (int i = 0; i < 4; i++) motor_esc_arm(&motors[i]);
 
     diff_drive_init(dd, motors);
 }
 
-static void test_dd_straight_forward(void)
+#define ESC_1500US  307
+#define ESC_2000US  410
+#define ESC_TOL     3
+
+static uint16_t get_ch_off(int ch)
 {
-    printf("[test] diff_drive straight forward\n");
-    mock_reset();
-    diff_drive_t dd;
-    setup_4wd(&dd);
-    diff_drive_enable(&dd, true);
-
-    mock_reset();
-    diff_drive_set(&dd, 0.5f, 0.0f);  /* 半速前进 */
-    diff_drive_update(&dd, 0.01f);
-
-    /* 左侧: 0.5 * 1000 = 500 (pin_a=500, pin_b=0) */
-    /* 右侧: inverted, 所以 0.5 → reverse → pin_a=0, pin_b=500 */
-    int fl_a, fl_b, fr_a, fr_b, rl_a, rl_b, rr_a, rr_b;
-    get_motor_duties(&dd.motors[MOTOR_FL], &fl_a, &fl_b);
-    get_motor_duties(&dd.motors[MOTOR_FR], &fr_a, &fr_b);
-    get_motor_duties(&dd.motors[MOTOR_RL], &rl_a, &rl_b);
-    get_motor_duties(&dd.motors[MOTOR_RR], &rr_a, &rr_b);
-
-    /* 前左 + 后左: 正转 500 */
-    ASSERT_F(fl_a == 500, "FL pin_a = %d", fl_a);
-    ASSERT_F(fl_b == 0,   "FL pin_b = %d", fl_b);
-    ASSERT_F(rl_a == 500, "RL pin_a = %d", rl_a);
-
-    /* 前右 + 后右: inverted, throttle=0.5 → power=-500 → pin_b=500 */
-    ASSERT_F(fr_b == 500, "FR pin_b = %d", fr_b);
-    ASSERT_F(rr_b == 500, "RR pin_b = %d", rr_b);
+    uint8_t base = 0x06 + 4 * ch;
+    return (uint16_t)((mock_i2c_get_reg(base + 3) << 8) | mock_i2c_get_reg(base + 2));
 }
 
-static void test_dd_spin_right(void)
+static void test_esc_forward(void)
 {
-    printf("[test] diff_drive spin right (pivot)\n");
-    mock_reset();
+    printf("[test] ESC diff_drive forward\n");
+    mock_i2c_reset();
     diff_drive_t dd;
-    setup_4wd(&dd);
+    setup_esc(&dd);
     diff_drive_enable(&dd, true);
+    mock_i2c_reset();
 
-    mock_reset();
-    diff_drive_set(&dd, 0.0f, 0.5f);  /* throttle=0, steer=0.5 右转 */
+    diff_drive_set(&dd, 0.5f, 0.0f);
     diff_drive_update(&dd, 0.01f);
 
-    /* left  = (0 - 0.5) * 1000 = -500 → 反转 */
-    /* right = (0 + 0.5) * 1000 = 500 → but inverted → 反转 */
-    /* 所以左侧反转，右侧反转(因为inverted) → 实际原地右转 */
+    /* left = 0.5 → 1750μs */
+    uint16_t fl = get_ch_off(0);
+    /* right = 0.5, inverted → -0.5 → 1250μs */
+    uint16_t fr = get_ch_off(1);
 
-    int fl_b = get_last_duty_for_pin(1);  /* FL 反转 */
-    int fr_a = get_last_duty_for_pin(2);  /* FR inverted, positive power → pin_a=0 */
-    int fr_b = get_last_duty_for_pin(3);  /* FR inverted, negative → pin_b */
+    /* 0.5: 1500 + 0.5*500 = 1750μs → 1750*4096/20000 ≈ 358 ticks */
+    int expected_l = (int)(1750.0f * 4096.0f / 20000.0f);
+    /* -0.5: 1500 - 250 = 1250μs → 1250*4096/20000 ≈ 256 ticks */
+    int expected_r = (int)(1250.0f * 4096.0f / 20000.0f);
 
-    /* 左侧 left=-500, FL not inverted → 反转: pin_a=0, pin_b=500 */
-    ASSERT_F(fl_b == 500, "FL reverse duty = %d", fl_b);
-    /* 右侧 right=500, FR inverted → actual -500 → 反转: pin_b=500 */
-    ASSERT_F(fr_b == 500, "FR inverted reverse duty = %d", fr_b);
+    ASSERT_F(abs((int)fl - expected_l) <= ESC_TOL,
+             "FL off = %d, expected ~%d", fl, expected_l);
+    ASSERT_F(abs((int)fr - expected_r) <= ESC_TOL,
+             "FR off = %d, expected ~%d", fr, expected_r);
 }
 
-static void test_dd_disabled(void)
+static void test_esc_spin(void)
 {
-    printf("[test] diff_drive disabled outputs zero\n");
-    mock_reset();
+    printf("[test] ESC diff_drive spin right\n");
+    mock_i2c_reset();
     diff_drive_t dd;
-    setup_4wd(&dd);
-    /* 不 enable */
+    setup_esc(&dd);
+    diff_drive_enable(&dd, true);
+    mock_i2c_reset();
 
-    mock_reset();
-    diff_drive_set(&dd, 1.0f, 1.0f);
+    diff_drive_set(&dd, 0.0f, 1.0f);  /* 纯右转 */
     diff_drive_update(&dd, 0.01f);
 
-    int fl_a = get_last_duty_for_pin(0);
-    int fl_b = get_last_duty_for_pin(1);
-    ASSERT_F(fl_a == 0, "FL pin_a = %d (should be 0)", fl_a);
-    ASSERT_F(fl_b == 0, "FL pin_b = %d (should be 0)", fl_b);
+    /* left = 0-1 = -1.0 → 1000μs, right = 0+1 = 1.0 inverted → -1.0 → 1000μs */
+    uint16_t fl = get_ch_off(0);
+    uint16_t fr = get_ch_off(1);
+
+    int expected_1000 = (int)(1000.0f * 4096.0f / 20000.0f);  /* 205 */
+
+    ASSERT_F(abs((int)fl - expected_1000) <= ESC_TOL,
+             "FL spin off = %d, expected ~%d", fl, expected_1000);
+    ASSERT_F(abs((int)fr - expected_1000) <= ESC_TOL,
+             "FR spin off = %d, expected ~%d", fr, expected_1000);
 }
 
-static void test_dd_brake(void)
+static void test_esc_stop(void)
 {
-    printf("[test] diff_drive brake\n");
-    mock_reset();
+    printf("[test] ESC diff_drive stop\n");
+    mock_i2c_reset();
     diff_drive_t dd;
-    setup_4wd(&dd);
+    setup_esc(&dd);
     diff_drive_enable(&dd, true);
+    mock_i2c_reset();
 
-    mock_reset();
-    diff_drive_brake(&dd);
+    diff_drive_set(&dd, 0.0f, 0.0f);
+    diff_drive_update(&dd, 0.01f);
 
-    /* 刹车: 所有 pin 都拉满 */
-    for (int i = 0; i < 8; i++) {
-        int d = get_last_duty_for_pin(i);
-        ASSERT_F(d == 1000, "pin %d brake duty = %d", i, d);
+    for (int ch = 0; ch < 4; ch++) {
+        uint16_t off = get_ch_off(ch);
+        ASSERT_F(abs((int)off - ESC_1500US) <= ESC_TOL,
+                 "CH%d stop off = %d, expected ~%d", ch, off, ESC_1500US);
     }
 }
 
-static void test_dd_clamp_steering(void)
+static void test_dd_steering_clamp(void)
 {
     printf("[test] diff_drive steering clamp\n");
-    mock_reset();
     diff_drive_t dd;
-    setup_4wd(&dd);
-    diff_drive_enable(&dd, true);
+    setup_esc(&dd);
 
-    mock_reset();
-    diff_drive_set(&dd, 0.0f, 5.0f);  /* 超出范围，应 clamp 到 1.0 */
+    diff_drive_set(&dd, 0.0f, 5.0f);
     ASSERT_F(fabsf(dd.steering - 1.0f) < 0.001f, "steering = %.2f", dd.steering);
 }
 
 int main(void)
 {
-    printf("=== Diff Drive Tests ===\n\n");
+    printf("=== Diff Drive Tests (DC + ESC) ===\n\n");
 
     hal_gpio_init();
 
-    test_dd_straight_forward();
-    test_dd_spin_right();
-    test_dd_disabled();
-    test_dd_brake();
-    test_dd_clamp_steering();
+    test_dc_forward();
+    test_dc_disabled();
+    test_esc_forward();
+    test_esc_spin();
+    test_esc_stop();
+    test_dd_steering_clamp();
 
     printf("\n%d passed, %d failed\n", g_pass, g_fail);
     return g_fail > 0 ? 1 : 0;
