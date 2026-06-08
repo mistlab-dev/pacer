@@ -24,6 +24,8 @@
 #include "filter/filter.h"
 #include "ctrl/diff_drive.h"
 #include "motor/motor.h"
+#include "remote/remote.h"
+#include "lift/lift.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -38,6 +40,8 @@ static volatile int g_running = 1;
 
 static diff_drive_t g_dd;
 static motor_t g_motors[DIFF_DRIVE_NUM_MOTORS];
+static remote_config_t g_remote_cfg;
+static lift_t g_lift;
 
 /* ================ 信号 ================ */
 
@@ -214,38 +218,29 @@ static int mode_debug(void)
 
 /* ================ 模式: 正常运行 ================ */
 
-static void parse_keyboard_command(diff_drive_t *dd)
-{
-    fd_set fds;
-    struct timeval tv = {0, 0};
-    FD_ZERO(&fds);
-    FD_SET(STDIN_FILENO, &fds);
-
-    if (select(STDIN_FILENO + 1, &fds, NULL, NULL, &tv) > 0) {
-        char buf[8];
-        if (fgets(buf, sizeof(buf), stdin)) {
-            switch (buf[0]) {
-                case 'w': case 'W': diff_drive_set(dd,  0.5f,  0.0f); break;
-                case 's': case 'S': diff_drive_set(dd, -0.5f,  0.0f); break;
-                case 'a': case 'A': diff_drive_set(dd,  0.0f, -0.5f); break;
-                case 'd': case 'D': diff_drive_set(dd,  0.0f,  0.5f); break;
-                case 'q': case 'Q': diff_drive_set(dd,  0.5f, -0.5f); break;
-                case 'e': case 'E': diff_drive_set(dd,  0.5f,  0.5f); break;
-                case ' ':           diff_drive_set(dd,  0.0f,  0.0f); break;
-                case 'x': case 'X': g_running = 0; break;
-            }
-        }
-    }
-}
+/*
+ * 遥控方式由 config 决定:
+ *   REMOTE_SRC_KEYBOARD — 本地 WASD
+ *   REMOTE_SRC_UDP      — 手机/手柄 WiFi
+ * UDP 协议: 8字节 (throttle:f32 + steering:f32), 小端
+ */
 
 static int mode_run(void)
 {
     if (sys_init() != 0) return -1;
 
-    printf("\n[APP] 差速驱动已启动!\n");
-    printf("[APP] WASD 遥控, 空格=停, X=退出\n\n");
+    /* 遥控初始化 */
+    g_remote_cfg = (remote_config_t)REMOTE_CONFIG_DEFAULT;
+    remote_init(&g_remote_cfg);
 
-    system("stty -echo -icanon min 0 time 0");
+    /* 升降机构 (暂不启用) */
+#if CFG_LIFT_ENABLED
+    lift_config_t lift_cfg = LIFT_CONFIG_DEFAULT;
+    lift_init(&g_lift, &lift_cfg);
+#endif
+
+    printf("\n[APP] 差速驱动已启动!\n");
+    printf("[APP] WASD/UDP 遥控, 空格=停, X=退出\n\n");
 
     /* === 主控制循环 === */
     int tick = 0;
@@ -255,8 +250,24 @@ static int mode_run(void)
     long interval_us = 1000000L / CFG_DIFF_CONTROL_HZ;
 
     while (g_running) {
-        parse_keyboard_command(&g_dd);
+        /* 1. 轮询遥控输入 */
+        remote_cmd_t cmd;
+        remote_poll(&cmd);
+
+        if (cmd.estop) {
+            g_running = 0;
+            break;
+        }
+
+        diff_drive_set(&g_dd, cmd.throttle, cmd.steering);
+
+        /* 2. 更新电机输出 */
         diff_drive_update(&g_dd, CFG_DIFF_CONTROL_DT);
+
+        /* 3. 升降机构更新 */
+#if CFG_LIFT_ENABLED
+        lift_update(&g_lift, CFG_DIFF_CONTROL_DT);
+#endif
 
 #if CFG_ENABLE_CONSOLE_LOG
         if (tick % (CFG_DIFF_CONTROL_HZ / 2) == 0) {
@@ -285,7 +296,8 @@ static int mode_run(void)
         }
     }
 
-    system("stty echo icanon");
+    /* 恢复终端 + 清理 */
+    remote_deinit();
     sys_deinit();
     return 0;
 }

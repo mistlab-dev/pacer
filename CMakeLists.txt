@@ -44,6 +44,12 @@ set(SOURCES
     # 电机
     src/motor/motor.c
 
+    # 遥控
+    src/remote/remote.c
+
+    # 升降机构
+    src/lift/lift.c
+
     # 应用
     src/app/app.c
     src/main.c
@@ -57,6 +63,8 @@ include_directories(
     ${CMAKE_SOURCE_DIR}/include/filter
     ${CMAKE_SOURCE_DIR}/include/ctrl
     ${CMAKE_SOURCE_DIR}/include/motor
+    ${CMAKE_SOURCE_DIR}/include/remote
+    ${CMAKE_SOURCE_DIR}/include/lift
     ${CMAKE_SOURCE_DIR}/include/tracker
     ${CMAKE_SOURCE_DIR}/include/app
 )
