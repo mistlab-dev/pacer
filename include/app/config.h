@@ -67,4 +67,22 @@
 #define CFG_USE_MADGWICK          1       /* 1=Madgwick, 0=互补滤波 */
 #define CFG_ENABLE_CONSOLE_LOG    1       /* 控制台打印调试 */
 
+/* ==================== 追踪 ==================== */
+
+#define CFG_TRACKER_ENABLED         1       /* 1=启用追踪, 0=纯平衡 */
+#define CFG_TRACK_BEACON_UUID       "AA BB CC DD EE FF 00 11 22 33 44 55 66 77 88 99"
+#define CFG_TRACK_HCI_DEVS          {0, 1, 2}  /* 3个蓝牙适配器 */
+#define CFG_TRACK_FOLLOW_DIST       1.5f    /* 跟随距离 (米) */
+#define CFG_TRACK_SPEED_MAX         0.5f    /* 最大跟随速度 (m/s) */
+#define CFG_TRACK_TURN_MAX          1.0f    /* 最大转向速度 (rad/s) */
+#define CFG_TRACK_LOST_TIMEOUT      3.0f    /* 丢失超时 (秒) */
+#define CFG_TRACK_SCAN_SPEED        0.5f    /* 扫描旋转速度 */
+
+/* 摄像头 */
+#define CFG_CAMERA_DEVICE           0
+#define CFG_CAMERA_WIDTH            320
+#define CFG_CAMERA_HEIGHT           240
+#define CFG_CAMERA_FPS              15
+#define CFG_CAMERA_METHOD           0       /* 0=轮廓, 1=HOG */
+
 #endif /* PACER_CONFIG_H */

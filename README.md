@@ -81,6 +81,22 @@ sudo ./pacer --debug
 sudo ./pacer
 ```
 
+**追踪功能 (可选):**
+
+- 蓝牙信标身份识别 (iBeacon UUID 匹配)
+- 3 接收器 RSSI 三角定位
+- 摄像头人体检测 (OpenCV)
+- 蓝牙 + 摄像头数据融合追踪
+- 状态机: 扫描 → 锁定 → 追踪 → 丢失恢复
+
+```bash
+# 编译 (不带摄像头)
+cmake .. -DCMAKE_BUILD_TYPE=Release
+
+# 编译 (带摄像头追踪)
+cmake .. -DCMAKE_BUILD_TYPE=Release -DUSE_OPENCV=ON
+```
+
 ## 调参
 
 编辑 `include/app/config.h`:

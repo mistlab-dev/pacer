@@ -23,6 +23,7 @@
 #include "filter/filter.h"
 #include "ctrl/balance.h"
 #include "motor/motor.h"
+#include "tracker/tracker.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -38,6 +39,7 @@ static volatile int g_running = 1;
 static balance_t  g_bal;
 static motor_t    g_mot_l;
 static motor_t    g_mot_r;
+static tracker_config_t g_track_cfg;
 
 /* ================ 信号 ================ */
 
@@ -85,6 +87,12 @@ static int sys_init(void)
     /* 平衡控制器 */
     balance_init(&g_bal);
 
+#if CFG_TRACKER_ENABLED
+    /* 追踪模块 */
+    g_track_cfg = (tracker_config_t)TRACKER_CONFIG_DEFAULT;
+    tracker_init(&g_track_cfg);
+#endif
+
     printf("[APP] all systems ready\n");
     return 0;
 }
@@ -93,6 +101,8 @@ static void sys_deinit(void)
 {
     printf("[APP] cleaning up...\n");
     balance_enable(&g_bal, false);
+    tracker_stop();
+    tracker_deinit();
     motor_deinit(&g_mot_l);
     motor_deinit(&g_mot_r);
     imu_deinit();
@@ -190,6 +200,9 @@ static int mode_run(void)
 
     /* 启动! */
     balance_enable(&g_bal, true);
+#if CFG_TRACKER_ENABLED
+    tracker_start();
+#endif
     printf("[APP] 平衡控制已启动! Ctrl+C 停止\n\n");
 
     /* === 主控制循环 === */
@@ -209,29 +222,37 @@ static int mode_run(void)
         /* 2. 姿态解算 */
         attitude_t att = filter_update(&sample, CFG_CONTROL_DT);
 
-        /* 3. 平衡控制 */
+        /* 3. 追踪 */
+#if CFG_TRACKER_ENABLED
+        tracker_output_t track = tracker_update();
+        balance_set_speed(&g_bal, track.target_speed);
+        balance_set_steer(&g_bal, track.target_yaw_rate);
+#endif
+
+        /* 4. 平衡控制 */
         const balance_output_t *out = balance_update(&g_bal, &att, &sample,
                                                      CFG_CONTROL_DT);
 
-        /* 4. 输出到电机 */
+        /* 5. 输出到电机 */
         if (!out->emergency) {
             motor_set(&g_mot_l, out->motor_left);
             motor_set(&g_mot_r, out->motor_right);
         }
 
-        /* 5. 控制台日志 (10Hz) */
+        /* 6. 控制台日志 (10Hz) */
 #if CFG_ENABLE_CONSOLE_LOG
         if (tick % 20 == 0) {
             const balance_debug_t *d = balance_get_debug(&g_bal);
-            printf("roll=%+7.2f°  target=%+6.2f°  L=%+5.0f R=%+5.0f\n",
+            const char *ts = tracker_state_str(tracker_get_state());
+            printf("roll=%+7.2f° target=%+6.2f° L=%+5.0f R=%+5.0f | %s\n",
                    d->roll, d->roll_target,
-                   out->motor_left, out->motor_right);
+                   out->motor_left, out->motor_right, ts);
         }
 #endif
 
         tick++;
 
-        /* 6. 精确延时 — 保持 200Hz */
+        /* 7. 精确延时 */
         struct timespec t_next = t0;
         long add_ns = (tick) * (long)CFG_CONTROL_INTERVAL_US * 1000L;
         t_next.tv_sec  += add_ns / 1000000000L;

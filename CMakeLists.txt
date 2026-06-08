@@ -16,6 +16,13 @@ find_package(Threads REQUIRED)
 find_library(PIGPIO_LIB pigpio)
 find_library(MATH_LIB m)
 
+# OpenCV (可选 — 用于摄像头追踪)
+option(USE_OPENCV "Enable OpenCV camera tracking" OFF)
+if(USE_OPENCV)
+    find_package(OpenCV REQUIRED)
+    add_definitions(-DUSE_OPENCV)
+endif()
+
 # 源文件 (按模块组织)
 set(SOURCES
     # HAL
@@ -36,6 +43,11 @@ set(SOURCES
     # 电机
     src/motor/motor.c
 
+    # 追踪
+    src/tracker/beacon.c
+    src/tracker/camera.c
+    src/tracker/tracker.c
+
     # 应用
     src/app/app.c
     src/main.c
@@ -49,6 +61,7 @@ include_directories(
     ${CMAKE_SOURCE_DIR}/include/filter
     ${CMAKE_SOURCE_DIR}/include/ctrl
     ${CMAKE_SOURCE_DIR}/include/motor
+    ${CMAKE_SOURCE_DIR}/include/tracker
     ${CMAKE_SOURCE_DIR}/include/app
 )
 
@@ -62,6 +75,10 @@ target_link_libraries(pacer
     ${MATH_LIB}
     rt
 )
+
+if(USE_OPENCV)
+    target_link_libraries(pacer PRIVATE ${OpenCV_LIBS})
+endif()
 
 # 安装
 install(TARGETS pacer RUNTIME DESTINATION bin)
