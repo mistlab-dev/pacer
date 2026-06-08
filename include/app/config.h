@@ -30,46 +30,53 @@
 #define CFG_MOTOR_MAX_DUTY        900     /* 最大占空比 (留余量) */
 #define CFG_MOTOR_DEADZONE        30      /* 死区补偿 */
 
-/* 左电机: GPIO12, GPIO13 */
-#define CFG_MOTOR_LEFT_A          12
-#define CFG_MOTOR_LEFT_B          13
-#define CFG_MOTOR_LEFT_INV        false
+/* PWM 源: 0=GPIO直连, 1=PCA9685 */
+#define CFG_MOTOR_PWM_SRC         1
 
-/* 右电机: GPIO18, GPIO19 (反向安装) */
-#define CFG_MOTOR_RIGHT_A         18
-#define CFG_MOTOR_RIGHT_B         19
-#define CFG_MOTOR_RIGHT_INV       true
+/* PCA9685 */
+#define CFG_PCA9685_I2C_BUS       1
+#define CFG_PCA9685_I2C_ADDR      0x40
 
-/* ==================== 平衡 PID 默认值 ==================== */
+/* 四轮电机通道 (PCA9685 通道号) */
+/* 前左 */
+#define CFG_MOTOR_FL_A            0
+#define CFG_MOTOR_FL_B            1
+#define CFG_MOTOR_FL_INV          false
+/* 前右 */
+#define CFG_MOTOR_FR_A            2
+#define CFG_MOTOR_FR_B            3
+#define CFG_MOTOR_FR_INV          true
+/* 后左 */
+#define CFG_MOTOR_RL_A            4
+#define CFG_MOTOR_RL_B            5
+#define CFG_MOTOR_RL_INV          false
+/* 后右 */
+#define CFG_MOTOR_RR_A            6
+#define CFG_MOTOR_RR_B            7
+#define CFG_MOTOR_RR_INV          true
 
-/* 角度环 (最关键) */
-#define CFG_BAL_ANGLE_KP          25.0f
-#define CFG_BAL_ANGLE_KI          0.0f
-#define CFG_BAL_ANGLE_KD          0.8f
-#define CFG_BAL_ANGLE_OFFSET      0.0f    /* 机械零点偏移 (度) */
+/* ==================== 差速驱动 PID ==================== */
 
-/* 速度环 */
-#define CFG_BAL_SPEED_KP          0.5f
-#define CFG_BAL_SPEED_KI          0.01f
-#define CFG_BAL_SPEED_KD          0.0f
-
-/* 转向环 */
-#define CFG_BAL_STEER_KP          0.3f
-#define CFG_BAL_STEER_KD          0.05f
-
-/* ==================== 安全限制 ==================== */
-
-#define CFG_ANGLE_LIMIT_DEG       30.0f   /* 超出则限幅 */
-#define CFG_ANGLE_EMERGENCY_DEG   45.0f   /* 超出则紧急停机 */
+#define CFG_DIFF_SPEED_KP         1.0f
+#define CFG_DIFF_SPEED_KI         0.0f
+#define CFG_DIFF_SPEED_KD         0.0f
+#define CFG_DIFF_CONTROL_HZ       100     /* 控制频率 */
+#define CFG_DIFF_CONTROL_DT       (1.0f / CFG_DIFF_CONTROL_HZ)
 
 /* ==================== 功能开关 ==================== */
 
 #define CFG_USE_MADGWICK          1       /* 1=Madgwick, 0=互补滤波 */
 #define CFG_ENABLE_CONSOLE_LOG    1       /* 控制台打印调试 */
 
-/* ==================== 追踪 ==================== */
+/* ==================== 升降机构 (预留) ==================== */
 
-#define CFG_TRACKER_ENABLED         1       /* 1=启用追踪, 0=纯平衡 */
+#define CFG_LIFT_ENABLED          0       /* 0=暂不启用 */
+#define CFG_LIFT_MOTOR_A          8       /* PCA9685 CH8 */
+#define CFG_LIFT_MOTOR_B          9       /* PCA9685 CH9 */
+#define CFG_LIFT_MAX_HEIGHT_CM    15.0f   /* 最大升高 (cm) */
+
+/* ==================== 追踪 (四轮车暂不启用) ==================== */
+#define CFG_TRACKER_ENABLED         0
 #define CFG_TRACK_BEACON_UUID       "AA BB CC DD EE FF 00 11 22 33 44 55 66 77 88 99"
 #define CFG_TRACK_HCI_DEVS          {0, 1, 2}  /* 3个蓝牙适配器 */
 #define CFG_TRACK_FOLLOW_DIST       1.5f    /* 跟随距离 (米) */

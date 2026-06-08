@@ -1,16 +1,16 @@
 /**
  * @file app.c
- * @brief 应用层 — 系统初始化、主循环、三种运行模式
+ * @brief 应用层 — 四轮差速驱动
  *
- * 三种模式:
+ * 运行模式:
  *   1. 正常运行 (APP_MODE_RUN)
- *      → 校准 → 等待用户放正 → 启动平衡 → 200Hz 控制循环
+ *      → 初始化 PCA9685 + 4电机 → 差速驱动控制循环
  *
  *   2. 校准模式 (APP_MODE_CALIBRATE)
- *      → 只初始化 IMU, 校准陀螺仪, 输出偏移值
+ *      → 只初始化 IMU, 校准陀螺仪
  *
  *   3. 调试模式 (APP_MODE_DEBUG)
- *      → 初始化 IMU, 打印姿态数据, 不驱动电机
+ *      → 打印姿态数据, 不驱动电机
  */
 
 #include "app/app.h"
@@ -18,12 +18,12 @@
 
 #include "hal/hal_gpio.h"
 #include "hal/hal_i2c.h"
+#include "hal/hal_pca9685.h"
 #include "sensor/imu.h"
 #include "sensor/imu_icm20948.h"
 #include "filter/filter.h"
-#include "ctrl/balance.h"
+#include "ctrl/diff_drive.h"
 #include "motor/motor.h"
-#include "tracker/tracker.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -36,10 +36,8 @@
 
 static volatile int g_running = 1;
 
-static balance_t  g_bal;
-static motor_t    g_mot_l;
-static motor_t    g_mot_r;
-static tracker_config_t g_track_cfg;
+static diff_drive_t g_dd;
+static motor_t g_motors[DIFF_DRIVE_NUM_MOTORS];
 
 /* ================ 信号 ================ */
 
@@ -49,11 +47,35 @@ static void on_signal(int sig)
     g_running = 0;
 }
 
-/* ================ 内部: 系统初始化 ================ */
+/* ================ 构建4个电机 ================ */
+
+#if CFG_MOTOR_PWM_SRC == 1
+#define MOTOR_SRC MOTOR_PWM_PCA9685
+#else
+#define MOTOR_SRC MOTOR_PWM_GPIO
+#endif
+
+static void init_motors(void)
+{
+    motor_init(&g_motors[MOTOR_FL], MOTOR_SRC,
+               CFG_MOTOR_FL_A, CFG_MOTOR_FL_B,
+               CFG_MOTOR_PWM_RANGE, CFG_MOTOR_FL_INV);
+    motor_init(&g_motors[MOTOR_FR], MOTOR_SRC,
+               CFG_MOTOR_FR_A, CFG_MOTOR_FR_B,
+               CFG_MOTOR_PWM_RANGE, CFG_MOTOR_FR_INV);
+    motor_init(&g_motors[MOTOR_RL], MOTOR_SRC,
+               CFG_MOTOR_RL_A, CFG_MOTOR_RL_B,
+               CFG_MOTOR_PWM_RANGE, CFG_MOTOR_RL_INV);
+    motor_init(&g_motors[MOTOR_RR], MOTOR_SRC,
+               CFG_MOTOR_RR_A, CFG_MOTOR_RR_B,
+               CFG_MOTOR_PWM_RANGE, CFG_MOTOR_RR_INV);
+}
+
+/* ================ 系统初始化 ================ */
 
 static int sys_init(void)
 {
-    printf("===== Pacer v1.0 — 二轮平衡车 =====\n");
+    printf("===== Pacer v2.0 — 四轮差速驱动 =====\n");
 
     /* HAL */
     if (hal_gpio_init() < 0) {
@@ -61,37 +83,21 @@ static int sys_init(void)
         return -1;
     }
 
-    /* 注册 ICM20948 驱动 */
-    imu_icm20948_register();
-
-    /* IMU */
-    imu_config_t imu_cfg = IMU_CONFIG_DEFAULT;
-    if (imu_init(&imu_cfg) != 0) {
-        fprintf(stderr, "[APP] IMU init failed\n");
-        return -2;
+#if CFG_MOTOR_PWM_SRC == 1
+    /* PCA9685 初始化 */
+    if (hal_pca9685_init(CFG_PCA9685_I2C_BUS, CFG_PCA9685_I2C_ADDR,
+                         CFG_MOTOR_PWM_HZ) != 0) {
+        fprintf(stderr, "[APP] PCA9685 init failed\n");
+        return -1;
     }
-
-    /* 姿态滤波器 */
-    filter_config_t f_cfg = FILTER_CONFIG_DEFAULT;
-#if !CFG_USE_MADGWICK
-    f_cfg.type = FILTER_COMPLEMENTARY;
 #endif
-    filter_init(&f_cfg);
 
     /* 电机 */
-    motor_init(&g_mot_l, CFG_MOTOR_LEFT_A,  CFG_MOTOR_LEFT_B,
-               CFG_MOTOR_PWM_RANGE, CFG_MOTOR_LEFT_INV);
-    motor_init(&g_mot_r, CFG_MOTOR_RIGHT_A, CFG_MOTOR_RIGHT_B,
-               CFG_MOTOR_PWM_RANGE, CFG_MOTOR_RIGHT_INV);
+    init_motors();
 
-    /* 平衡控制器 */
-    balance_init(&g_bal);
-
-#if CFG_TRACKER_ENABLED
-    /* 追踪模块 */
-    g_track_cfg = (tracker_config_t)TRACKER_CONFIG_DEFAULT;
-    tracker_init(&g_track_cfg);
-#endif
+    /* 差速驱动 */
+    diff_drive_init(&g_dd, g_motors);
+    diff_drive_enable(&g_dd, true);
 
     printf("[APP] all systems ready\n");
     return 0;
@@ -100,12 +106,10 @@ static int sys_init(void)
 static void sys_deinit(void)
 {
     printf("[APP] cleaning up...\n");
-    balance_enable(&g_bal, false);
-    tracker_stop();
-    tracker_deinit();
-    motor_deinit(&g_mot_l);
-    motor_deinit(&g_mot_r);
-    imu_deinit();
+    diff_drive_deinit(&g_dd);
+#if CFG_MOTOR_PWM_SRC == 1
+    hal_pca9685_deinit();
+#endif
     hal_gpio_deinit();
     printf("[APP] bye\n");
 }
@@ -175,7 +179,7 @@ static int mode_debug(void)
                    att.roll, att.pitch, att.yaw,
                    sample.accel.x, sample.accel.y, sample.accel.z);
         }
-        usleep(50000);  /* 20Hz 显示 */
+        usleep(50000);
     }
 
     imu_deinit();
@@ -185,76 +189,71 @@ static int mode_debug(void)
 
 /* ================ 模式: 正常运行 ================ */
 
+/**
+ * 简单的键盘遥控 (临时方案)
+ * TODO: 后续接入蓝牙手柄 / 手机APP / 自动追踪
+ */
+static void parse_keyboard_command(diff_drive_t *dd)
+{
+    fd_set fds;
+    struct timeval tv = {0, 0};  /* 非阻塞 */
+    FD_ZERO(&fds);
+    FD_SET(STDIN_FILENO, &fds);
+
+    if (select(STDIN_FILENO + 1, &fds, NULL, NULL, &tv) > 0) {
+        char buf[8];
+        if (fgets(buf, sizeof(buf), stdin)) {
+            switch (buf[0]) {
+                case 'w': case 'W': diff_drive_set(dd,  0.5f,  0.0f); break;
+                case 's': case 'S': diff_drive_set(dd, -0.5f,  0.0f); break;
+                case 'a': case 'A': diff_drive_set(dd,  0.0f, -0.5f); break;
+                case 'd': case 'D': diff_drive_set(dd,  0.0f,  0.5f); break;
+                case 'q': case 'Q': diff_drive_set(dd,  0.5f, -0.5f); break;
+                case 'e': case 'E': diff_drive_set(dd,  0.5f,  0.5f); break;
+                case ' ':           diff_drive_set(dd,  0.0f,  0.0f); break;
+                case 'x': case 'X': g_running = 0; break;
+            }
+        }
+    }
+}
+
 static int mode_run(void)
 {
     if (sys_init() != 0) return -1;
 
-    /* 校准 */
-    printf("\n[APP] 自动校准中... 请保持静止\n");
-    imu_calibrate_gyro(200);
-    usleep(100000);
+    printf("\n[APP] 四轮差速驱动已启动!\n");
+    printf("[APP] WASD 遥控, 空格=停, X=退出\n\n");
 
-    /* 等用户就位 */
-    printf("[APP] 扶正车体, 按 Enter 启动平衡控制...\n");
-    getchar();
-
-    /* 启动! */
-    balance_enable(&g_bal, true);
-#if CFG_TRACKER_ENABLED
-    tracker_start();
-#endif
-    printf("[APP] 平衡控制已启动! Ctrl+C 停止\n\n");
+    /* 把 stdin 设为非阻塞 (raw 模式) */
+    system("stty -echo -icanon min 0 time 0");
 
     /* === 主控制循环 === */
-    imu_sample_t sample;
     int tick = 0;
-
     struct timespec t0;
     clock_gettime(CLOCK_MONOTONIC, &t0);
 
+    long interval_us = 1000000L / CFG_DIFF_CONTROL_HZ;
+
     while (g_running) {
-        /* 1. 读 IMU */
-        if (imu_read(&sample) != 0) {
-            usleep(1000);
-            continue;
-        }
+        /* 1. 读取遥控输入 */
+        parse_keyboard_command(&g_dd);
 
-        /* 2. 姿态解算 */
-        attitude_t att = filter_update(&sample, CFG_CONTROL_DT);
+        /* 2. 更新电机输出 */
+        diff_drive_update(&g_dd, CFG_DIFF_CONTROL_DT);
 
-        /* 3. 追踪 */
-#if CFG_TRACKER_ENABLED
-        tracker_output_t track = tracker_update();
-        balance_set_speed(&g_bal, track.target_speed);
-        balance_set_steer(&g_bal, track.target_yaw_rate);
-#endif
-
-        /* 4. 平衡控制 */
-        const balance_output_t *out = balance_update(&g_bal, &att, &sample,
-                                                     CFG_CONTROL_DT);
-
-        /* 5. 输出到电机 */
-        if (!out->emergency) {
-            motor_set(&g_mot_l, out->motor_left);
-            motor_set(&g_mot_r, out->motor_right);
-        }
-
-        /* 6. 控制台日志 (10Hz) */
+        /* 3. 控制台日志 (2Hz) */
 #if CFG_ENABLE_CONSOLE_LOG
-        if (tick % 20 == 0) {
-            const balance_debug_t *d = balance_get_debug(&g_bal);
-            const char *ts = tracker_state_str(tracker_get_state());
-            printf("roll=%+7.2f° target=%+6.2f° L=%+5.0f R=%+5.0f | %s\n",
-                   d->roll, d->roll_target,
-                   out->motor_left, out->motor_right, ts);
+        if (tick % (CFG_DIFF_CONTROL_HZ / 2) == 0) {
+            printf("thr=%+5.2f steer=%+5.2f\n",
+                   g_dd.throttle, g_dd.steering);
         }
 #endif
 
         tick++;
 
-        /* 7. 精确延时 */
+        /* 4. 精确延时 */
         struct timespec t_next = t0;
-        long add_ns = (tick) * (long)CFG_CONTROL_INTERVAL_US * 1000L;
+        long add_ns = (long)tick * interval_us * 1000L;
         t_next.tv_sec  += add_ns / 1000000000L;
         t_next.tv_nsec += add_ns % 1000000000L;
         if (t_next.tv_nsec >= 1000000000L) {
@@ -270,6 +269,9 @@ static int mode_run(void)
             usleep((useconds_t)(wait_ns / 1000));
         }
     }
+
+    /* 恢复终端 */
+    system("stty echo icanon");
 
     sys_deinit();
     return 0;

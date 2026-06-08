@@ -44,9 +44,9 @@ typedef struct {
 
 /* 平衡控制器 */
 typedef struct {
-    pid_t pid_angle;        /* 角度环 */
-    pid_t pid_speed;        /* 速度环 */
-    pid_t pid_steer;        /* 转向环 */
+    pacer_pid_t pid_angle;        /* 角度环 */
+    pacer_pid_t pid_speed;        /* 速度环 */
+    pacer_pid_t pid_steer;        /* 转向环 */
 
     float target_speed;     /* 目标前进速度 */
     float target_yaw_rate;  /* 目标偏航角速度 */

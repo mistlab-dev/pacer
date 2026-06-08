@@ -12,7 +12,7 @@
 #include "ctrl/pid.h"
 #include <math.h>
 
-void pid_init(pid_t *pid,
+void pid_init(pacer_pid_t *pid,
               float kp, float ki, float kd,
               float integral_limit, float output_limit)
 {
@@ -26,7 +26,7 @@ void pid_init(pid_t *pid,
     pid->output     = 0.0f;
 }
 
-float pid_compute(pid_t *pid, float error, float dt)
+float pid_compute(pacer_pid_t *pid, float error, float dt)
 {
     /* P */
     float p = pid->kp * error;
@@ -59,14 +59,14 @@ float pid_compute(pid_t *pid, float error, float dt)
     return out;
 }
 
-void pid_reset(pid_t *pid)
+void pid_reset(pacer_pid_t *pid)
 {
     pid->integral   = 0.0f;
     pid->prev_error = 0.0f;
     pid->output     = 0.0f;
 }
 
-void pid_set_gains(pid_t *pid, float kp, float ki, float kd)
+void pid_set_gains(pacer_pid_t *pid, float kp, float ki, float kd)
 {
     pid->kp = kp;
     pid->ki = ki;

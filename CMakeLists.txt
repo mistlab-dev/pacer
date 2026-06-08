@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.10)
-project(pacer VERSION 1.0.0 LANGUAGES C)
+project(pacer VERSION 2.0.0 LANGUAGES C)
 
 # C11 标准
 set(CMAKE_C_STANDARD 11)
@@ -28,6 +28,7 @@ set(SOURCES
     # HAL
     src/hal/hal_i2c.c
     src/hal/hal_gpio.c
+    src/hal/hal_pca9685.c
 
     # 传感器
     src/sensor/imu.c
@@ -38,15 +39,10 @@ set(SOURCES
 
     # 控制器
     src/ctrl/pid.c
-    src/ctrl/balance.c
+    src/ctrl/diff_drive.c
 
     # 电机
     src/motor/motor.c
-
-    # 追踪
-    src/tracker/beacon.c
-    src/tracker/camera.c
-    src/tracker/tracker.c
 
     # 应用
     src/app/app.c
