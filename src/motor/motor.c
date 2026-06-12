@@ -27,34 +27,38 @@
 #define ESC_PULSE_MIN     1000    /* 反转最大 / 停止 */
 #define ESC_PULSE_MID     1500    /* 中位 (停止) */
 #define ESC_PULSE_MAX     2000    /* 正转最大 */
-#define ESC_PWM_FREQ      50      /* 50Hz (20ms 周期) */
 
-/* ---------- 内部辅助 ---------- */
-
+/*
+ * ESC: power (0~1) → PCA9685 duty
+ *
+ * PCA9685 分辨率固定 4096。
+ * 不管 PCA9685 的 PWM 频率设多少，tick 的计算方式都一样:
+ *   duty = pulse_us * 4096 / period_us
+ *
+ * 对于标准 ESC (1000~2000μs):
+ *   0.0 → 1000μs → 1000 * 4096 / period
+ *   1.0 → 2000μs → 2000 * 4096 / period
+ *
+ * 注意: period 随 PWM 频率变化:
+ *   50Hz  → period = 20000μs → 1000μs ≈ 205 ticks, 2000μs ≈ 410 ticks
+ *   400Hz → period = 2500μs  → 1000μs ≈ 1638 ticks, 2000μs ≈ 3277 ticks
+ */
 static void pca_write_pwm(int channel, int duty)
 {
     hal_pca9685_set_pwm(channel, (uint16_t)duty, (uint16_t)CFG_MOTOR_PWM_RANGE);
 }
 
-/**
- * ESC: power (-1~+1) → PCA9685 duty
- *
- * PCA9685 在 50Hz 下, 一个周期 = 20ms = 20000μs
- * 分辨率 4096, 所以 1μs ≈ 4096/20000 = 0.2048 ticks
- * 1000μs = 205 ticks
- * 1500μs = 307 ticks
- * 2000μs = 410 ticks
- */
 static uint16_t esc_power_to_duty(float power)
 {
     if (power >  1.0f) power =  1.0f;
-    if (power < -1.0f) power = -1.0f;
+    if (power <  0.0f) power =  0.0f;  /* 四旋翼不允许负油门 */
 
-    /* power: -1~+1 → pulse: 1000~2000μs */
-    float pulse_us = ESC_PULSE_MID + power * (ESC_PULSE_MAX - ESC_PULSE_MID);
+    /* power: 0~1 → pulse: 1000~2000μs */
+    float pulse_us = ESC_PULSE_MIN + power * (ESC_PULSE_MAX - ESC_PULSE_MIN);
 
-    /* μs → PCA9685 ticks (50Hz, 20ms 周期, 4096 级) */
-    uint16_t ticks = (uint16_t)(pulse_us * 4096.0f / 20000.0f);
+    /* μs → PCA9685 ticks (4096 级), period 由 PCA9685 频率决定 */
+    float period_us = 1000000.0f / (float)CFG_PCA9685_PWM_HZ;
+    uint16_t ticks = (uint16_t)(pulse_us * 4096.0f / period_us);
 
     return ticks;
 }
@@ -115,10 +119,10 @@ void motor_set(motor_t *m, float power)
 {
     if (!m->ready) return;
 
-    /* ---- ESC 模式 ---- */
+    /* ---- ESC 模式 (四旋翼: 0~1, 不允许负油门) ---- */
     if (m->type == MOTOR_TYPE_ESC) {
-        if (!m->armed) return;  /* 未解锁不输出 */
-        if (m->inverted) power = -power;
+        if (!m->armed) return;
+        /* 四旋翼不需要 inversion，混控器已经处理了方向 */
         uint16_t ticks = esc_power_to_duty(power);
         hal_pca9685_set_pwm(m->pin_a, ticks, 4095);
         return;
@@ -177,12 +181,12 @@ void motor_esc_arm(motor_t *m)
 {
     if (m->type != MOTOR_TYPE_ESC || !m->ready) return;
 
-    /* 发送中位信号 1500μs — 大多数电调用这个解锁 */
-    uint16_t mid_ticks = esc_power_to_duty(0.0f);
-    hal_pca9685_set_pwm(m->pin_a, mid_ticks, 4095);
+    /* 发送最小油门 1000μs — 四旋翼电调看到最低油门完成初始化 */
+    uint16_t min_ticks = esc_power_to_duty(0.0f);
+    hal_pca9685_set_pwm(m->pin_a, min_ticks, 4095);
 
     m->armed = true;
-    printf("[MOTOR] ESC ch=%d ARMED (1500μs)\n", m->pin_a);
+    printf("[MOTOR] ESC ch=%d ARMED (1000μs)\n", m->pin_a);
 }
 
 void motor_deinit(motor_t *m)

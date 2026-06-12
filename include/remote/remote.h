@@ -1,11 +1,17 @@
 /**
  * @file remote.h
- * @brief 遥控输入统一接口
+ * @brief 遥控输入统一接口 — 四旋翼
  *
- * 抽象遥控输入源，上层只调 remote_poll() 获取 throttle/steering。
+ * 抽象遥控输入源，上层只调 remote_poll() 获取四通道输入。
  * 支持多种输入源:
- *   - 键盘 (stdin, WASD)
+ *   - 键盘 (stdin, 调试用)
  *   - UDP (手机APP/手柄通过网络)
+ *
+ * 通道映射:
+ *   throttle  0~1    油门
+ *   roll     -1~+1   横滚
+ *   pitch    -1~+1   俯仰
+ *   yaw      -1~+1   偏航
  */
 
 #ifndef PACER_REMOTE_H
@@ -15,14 +21,17 @@
 
 /* 遥控输入源 */
 typedef enum {
-    REMOTE_SRC_KEYBOARD,   /* 标准输入 WASD */
+    REMOTE_SRC_KEYBOARD,   /* 标准输入 (调试) */
     REMOTE_SRC_UDP,        /* UDP 网络遥控 */
 } remote_src_t;
 
 /* 遥控命令 */
 typedef struct {
-    float throttle;     /* -1.0 ~ +1.0 */
-    float steering;     /* -1.0 ~ +1.0 */
+    float throttle;     /* 0.0 ~ 1.0 油门 */
+    float roll;         /* -1.0 ~ +1.0 */
+    float pitch;        /* -1.0 ~ +1.0 */
+    float yaw;          /* -1.0 ~ +1.0 */
+    bool  arm_switch;   /* 解锁开关 */
     bool  estop;        /* 紧急停止 */
     bool  connected;    /* 是否有遥控连接 */
 } remote_cmd_t;
@@ -43,13 +52,11 @@ typedef struct {
 
 /**
  * @brief 初始化遥控模块
- * @return 0=成功
  */
 int  remote_init(const remote_config_t *cfg);
 
 /**
  * @brief 轮询遥控输入 (非阻塞)
- * @param cmd 输出命令
  */
 void remote_poll(remote_cmd_t *cmd);
 

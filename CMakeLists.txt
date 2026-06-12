@@ -1,88 +1,90 @@
 cmake_minimum_required(VERSION 3.10)
-project(pacer VERSION 2.0.0 LANGUAGES C)
+project(pacer C)
 
-# C11 标准
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
-set(CMAKE_C_EXTENSIONS OFF)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-# 编译选项
-set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -Wextra -Werror=return-type")
-set(CMAKE_C_FLAGS_RELEASE "-O2 -DNDEBUG")
-set(CMAKE_C_FLAGS_DEBUG   "-g -DDEBUG -O0")
+# 警告
+add_compile_options(-Wall -Wextra -Wshadow -Wundef)
 
-# 依赖
-find_package(Threads REQUIRED)
-find_library(PIGPIO_LIB pigpio)
-find_library(MATH_LIB m)
-
-# OpenCV (可选 — 用于摄像头追踪)
-option(USE_OPENCV "Enable OpenCV camera tracking" OFF)
-if(USE_OPENCV)
-    find_package(OpenCV REQUIRED)
-    add_definitions(-DUSE_OPENCV)
+# pigpio (目标机器上有, 开发机可以没有)
+find_library(PIGPIO pigpio QUIET)
+find_library(PIGPIO_RT rt QUIET)
+if(PIGPIO)
+    message(STATUS "pigpio found: ${PIGPIO}")
+else()
+    message(WARNING "pigpio not found — stub for cross-compile")
 endif()
 
-# 源文件 (按模块组织)
-set(SOURCES
-    # HAL
-    src/hal/hal_i2c.c
+# 源文件
+set(SRCS
+    src/main.c
+    src/app/app.c
     src/hal/hal_gpio.c
+    src/hal/hal_i2c.c
     src/hal/hal_pca9685.c
-
-    # 传感器
     src/sensor/imu.c
     src/sensor/impl/imu_icm20948.c
-
-    # 滤波器
     src/filter/filter.c
-
-    # 控制器
     src/ctrl/pid.c
-    src/ctrl/diff_drive.c
-
-    # 电机
+    src/ctrl/attitude.c
+    src/ctrl/quad_mixer.c
     src/motor/motor.c
-
-    # 遥控
     src/remote/remote.c
-
-    # 升降机构
-    src/lift/lift.c
-
-    # 应用
-    src/app/app.c
-    src/main.c
 )
 
-# 头文件搜索路径
-include_directories(
+add_executable(${PROJECT_NAME} ${SRCS})
+
+target_include_directories(${PROJECT_NAME} PRIVATE
     ${CMAKE_SOURCE_DIR}/include
-    ${CMAKE_SOURCE_DIR}/include/hal
-    ${CMAKE_SOURCE_DIR}/include/sensor
-    ${CMAKE_SOURCE_DIR}/include/filter
-    ${CMAKE_SOURCE_DIR}/include/ctrl
-    ${CMAKE_SOURCE_DIR}/include/motor
-    ${CMAKE_SOURCE_DIR}/include/remote
-    ${CMAKE_SOURCE_DIR}/include/lift
-    ${CMAKE_SOURCE_DIR}/include/tracker
-    ${CMAKE_SOURCE_DIR}/include/app
 )
 
-# 构建目标
-add_executable(pacer ${SOURCES})
-
-target_link_libraries(pacer
-    PRIVATE
-    Threads::Threads
-    ${PIGPIO_LIB}
-    ${MATH_LIB}
-    rt
+target_link_libraries(${PROJECT_NAME} PRIVATE
+    m
 )
 
-if(USE_OPENCV)
-    target_link_libraries(pacer PRIVATE ${OpenCV_LIBS})
+# pigpio 和 rt (只在找到时链接)
+if(PIGPIO)
+    target_link_libraries(${PROJECT_NAME} PRIVATE ${PIGPIO})
+endif()
+if(PIGPIO_RT)
+    target_link_libraries(${PROJECT_NAME} PRIVATE ${PIGPIO_RT})
 endif()
 
-# 安装
-install(TARGETS pacer RUNTIME DESTINATION bin)
+# ---------- 测试 (可选) ----------
+option(BUILD_TESTS "Build unit tests" OFF)
+
+if(BUILD_TESTS)
+    enable_testing()
+
+    add_executable(test_pid
+        tests/test_pid.c
+        src/ctrl/pid.c
+    )
+    target_include_directories(test_pid PRIVATE ${CMAKE_SOURCE_DIR}/include)
+    add_test(NAME pid COMMAND test_pid)
+
+    add_executable(test_motor
+        tests/test_motor.c
+        src/motor/motor.c
+        tests/mocks/mock_hal_gpio.c
+        tests/mocks/mock_hal_i2c.c
+    )
+    target_include_directories(test_motor PRIVATE
+        ${CMAKE_SOURCE_DIR}/include
+        ${CMAKE_SOURCE_DIR}/tests/mocks
+    )
+    add_test(NAME motor COMMAND test_motor)
+
+    add_executable(test_pca9685
+        tests/test_pca9685.c
+        src/hal/hal_pca9685.c
+        tests/mocks/mock_hal_i2c.c
+    )
+    target_include_directories(test_pca9685 PRIVATE
+        ${CMAKE_SOURCE_DIR}/include
+        ${CMAKE_SOURCE_DIR}/tests/mocks
+    )
+    add_test(NAME pca9685 COMMAND test_pca9685)
+endif()

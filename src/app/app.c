@@ -1,16 +1,19 @@
 /**
  * @file app.c
- * @brief 应用层 — 四轮差速驱动 (ESC/DC 自适应)
+ * @brief 应用层 — 四旋翼无人机 (RPi Zero 2W + ICM20948 + PCA9685)
+ *
+ * 主循环:
+ *   1. 读取 IMU
+ *   2. 姿态估计 (Madgwick / 互补)
+ *   3. 遥控输入
+ *   4. 姿态控制 (串级 PID)
+ *   5. 混控 → 4 电机输出
  *
  * 运行模式:
- *   1. 正常运行 (APP_MODE_RUN)
- *      → 初始化 PCA9685 + 4电机 → ESC 校准 → 差速驱动
- *
- *   2. 校准模式 (APP_MODE_CALIBRATE)
- *      → IMU 校准 或 ESC 校准
- *
- *   3. 调试模式 (APP_MODE_DEBUG)
- *      → 打印姿态数据, 不驱动电机
+ *   RUN       — 正常飞行
+ *   CALIBRATE — IMU 陀螺仪校准
+ *   DEBUG     — 打印姿态数据，不动电机
+ *   ESC_CAL   — ESC 油门行程校准
  */
 
 #include "app/app.h"
@@ -22,10 +25,11 @@
 #include "sensor/imu.h"
 #include "sensor/imu_icm20948.h"
 #include "filter/filter.h"
-#include "ctrl/diff_drive.h"
+#include "ctrl/pid.h"
+#include "ctrl/attitude.h"
+#include "ctrl/quad_mixer.h"
 #include "motor/motor.h"
 #include "remote/remote.h"
-#include "lift/lift.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -33,15 +37,16 @@
 #include <unistd.h>
 #include <string.h>
 #include <time.h>
+#include <math.h>
 
 /* ================ 全局状态 ================ */
 
 static volatile int g_running = 1;
 
-static diff_drive_t g_dd;
-static motor_t g_motors[DIFF_DRIVE_NUM_MOTORS];
+static attitude_ctrl_t g_att;
+static quad_mixer_t    g_mixer;
+static motor_t         g_motors[QUAD_NUM_MOTORS];
 static remote_config_t g_remote_cfg;
-static lift_t g_lift;
 
 /* ================ 信号 ================ */
 
@@ -55,57 +60,30 @@ static void on_signal(int sig)
 
 static void init_motors(void)
 {
-#if CFG_MOTOR_MODE == 1
-    /* ESC 无刷电调模式: 每个电机 1 个信号通道 */
-    motor_init_esc(&g_motors[MOTOR_FL], CFG_ESC_FL_CH, CFG_ESC_FL_INV);
-    motor_init_esc(&g_motors[MOTOR_FR], CFG_ESC_FR_CH, CFG_ESC_FR_INV);
-    motor_init_esc(&g_motors[MOTOR_RL], CFG_ESC_RL_CH, CFG_ESC_RL_INV);
-    motor_init_esc(&g_motors[MOTOR_RR], CFG_ESC_RR_CH, CFG_ESC_RR_INV);
-#else
-    /* DC 有刷电机模式: 每个电机 2 个通道 */
-    motor_init_dc(&g_motors[MOTOR_FL], MOTOR_TYPE_DC_PCA9685,
-                  CFG_MOTOR_FL_A, CFG_MOTOR_FL_B,
-                  CFG_MOTOR_PWM_RANGE, CFG_MOTOR_FL_INV);
-    motor_init_dc(&g_motors[MOTOR_FR], MOTOR_TYPE_DC_PCA9685,
-                  CFG_MOTOR_FR_A, CFG_MOTOR_FR_B,
-                  CFG_MOTOR_PWM_RANGE, CFG_MOTOR_FR_INV);
-    motor_init_dc(&g_motors[MOTOR_RL], MOTOR_TYPE_DC_PCA9685,
-                  CFG_MOTOR_RL_A, CFG_MOTOR_RL_B,
-                  CFG_MOTOR_PWM_RANGE, CFG_MOTOR_RL_INV);
-    motor_init_dc(&g_motors[MOTOR_RR], MOTOR_TYPE_DC_PCA9685,
-                  CFG_MOTOR_RR_A, CFG_MOTOR_RR_B,
-                  CFG_MOTOR_PWM_RANGE, CFG_MOTOR_RR_INV);
-#endif
+    motor_init_esc(&g_motors[QUAD_FL], CFG_ESC_FL_CH, false);
+    motor_init_esc(&g_motors[QUAD_FR], CFG_ESC_FR_CH, false);
+    motor_init_esc(&g_motors[QUAD_RL], CFG_ESC_RL_CH, false);
+    motor_init_esc(&g_motors[QUAD_RR], CFG_ESC_RR_CH, false);
 }
 
-/* ================ ESC 校准 ================ */
+/* ================ ESC 解锁 ================ */
 
 static void esc_arm_all(void)
 {
-#if CFG_MOTOR_MODE == 1
-    printf("[APP] ESC 校准/解锁中...\n");
-    printf("[APP] 发送中位信号 (1500μs), 等待电调响应...\n");
-
-    for (int i = 0; i < DIFF_DRIVE_NUM_MOTORS; i++) {
+    printf("[APP] ESC 解锁中...\n");
+    for (int i = 0; i < QUAD_NUM_MOTORS; i++) {
         motor_esc_arm(&g_motors[i]);
     }
-
     printf("[APP] 等待 3 秒...\n");
     usleep(3000000);
-
     printf("[APP] ESC 解锁完成!\n");
-#endif
 }
 
 /* ================ 系统初始化 ================ */
 
 static int sys_init(void)
 {
-#if CFG_MOTOR_MODE == 1
-    printf("===== Pacer v2.0 — 四轮 ESC 差速驱动 =====\n");
-#else
-    printf("===== Pacer v2.0 — 四轮 DC 差速驱动 =====\n");
-#endif
+    printf("===== Pacer v3.0 — 四旋翼无人机 =====\n");
 
     /* HAL */
     if (hal_gpio_init() < 0) {
@@ -113,7 +91,7 @@ static int sys_init(void)
         return -1;
     }
 
-    /* PCA9685 初始化 */
+    /* PCA9685 */
     if (hal_pca9685_init(CFG_PCA9685_I2C_BUS, CFG_PCA9685_I2C_ADDR,
                          CFG_PCA9685_PWM_HZ) != 0) {
         fprintf(stderr, "[APP] PCA9685 init failed\n");
@@ -122,28 +100,37 @@ static int sys_init(void)
 
     /* 电机 */
     init_motors();
-
-    /* ESC 校准 (DC 模式跳过) */
     esc_arm_all();
 
-    /* 差速驱动 */
-    diff_drive_init(&g_dd, g_motors);
-    diff_drive_enable(&g_dd, true);
+    /* 姿态控制器 */
+    attitude_init(&g_att);
+
+    /* 混控器 */
+    mixer_config_t mcfg = MIXER_CONFIG_DEFAULT;
+    quad_mixer_init(&g_mixer, &mcfg);
 
     printf("[APP] all systems ready\n");
+    printf("[APP] 按 R 解锁电机, 再按 R 上锁\n");
     return 0;
 }
 
 static void sys_deinit(void)
 {
     printf("[APP] cleaning up...\n");
-    diff_drive_deinit(&g_dd);
+
+    /* 电机归零 */
+    for (int i = 0; i < QUAD_NUM_MOTORS; i++) {
+        motor_set(&g_motors[i], 0.0f);
+    }
+
+    quad_mixer_deinit(&g_mixer);
+    attitude_enable(&g_att, false);
     hal_pca9685_deinit();
     hal_gpio_deinit();
     printf("[APP] bye\n");
 }
 
-/* ================ 模式: 校准 ================ */
+/* ================ 模式: 校准 IMU ================ */
 
 static int mode_calibrate(void)
 {
@@ -178,6 +165,55 @@ static int mode_calibrate(void)
     return 0;
 }
 
+/* ================ 模式: ESC 校准 ================ */
+
+static int mode_esc_cal(void)
+{
+    printf("\n=== ESC 油门行程校准 ===\n");
+    printf("这个流程会: 最大油门 → 接通 ESC 电源 → 听到滴滴 → 拉到最低\n\n");
+
+    if (hal_gpio_init() < 0) return -1;
+
+    if (hal_pca9685_init(CFG_PCA9685_I2C_BUS, CFG_PCA9685_I2C_ADDR,
+                         CFG_PCA9685_PWM_HZ) != 0) {
+        hal_gpio_deinit();
+        return -1;
+    }
+
+    motor_t m[4];
+    for (int i = 0; i < 4; i++) {
+        motor_init_esc(&m[i], i, false);
+    }
+
+    printf("步骤 1: 发送最大油门到所有 ESC\n");
+    printf("请断开 ESC 电源, 按 Enter 继续...\n");
+    getchar();
+
+    for (int i = 0; i < 4; i++) {
+        motor_set(&m[i], 1.0f);
+    }
+
+    printf("现在接通 ESC 电源! 等待滴滴声...\n");
+    printf("听到两声短滴后, 按 Enter 发送最小油门...\n");
+    getchar();
+
+    for (int i = 0; i < 4; i++) {
+        motor_set(&m[i], 0.0f);
+    }
+
+    printf("等待 3 秒确认...\n");
+    usleep(3000000);
+
+    printf("校准完成! 断开电源再重新接通即可使用。\n");
+
+    for (int i = 0; i < 4; i++) {
+        motor_deinit(&m[i]);
+    }
+    hal_pca9685_deinit();
+    hal_gpio_deinit();
+    return 0;
+}
+
 /* ================ 模式: 调试 ================ */
 
 static int mode_debug(void)
@@ -197,16 +233,16 @@ static int mode_debug(void)
 
     printf("\n=== 调试模式 (Ctrl+C 退出) ===\n\n");
     printf("%-8s %-8s %-8s  | %-8s %-8s %-8s\n",
-           "Roll", "Pitch", "Yaw", "aX", "aY", "aZ");
+           "Roll", "Pitch", "Yaw", "gX", "gY", "gZ");
     printf("─────────────────────────────────────────────\n");
 
     imu_sample_t sample;
     while (g_running) {
         if (imu_read(&sample) == 0) {
             attitude_t att = filter_update(&sample, CFG_CONTROL_DT);
-            printf("%-8.2f %-8.2f %-8.2f  | %-8.2f %-8.2f %-8.2f\n",
+            printf("%-8.2f %-8.2f %-8.2f  | %-8.1f %-8.1f %-8.1f\n",
                    att.roll, att.pitch, att.yaw,
-                   sample.accel.x, sample.accel.y, sample.accel.z);
+                   sample.gyro.x, sample.gyro.y, sample.gyro.z);
         }
         usleep(50000);
     }
@@ -216,41 +252,66 @@ static int mode_debug(void)
     return 0;
 }
 
-/* ================ 模式: 正常运行 ================ */
-
-/*
- * 遥控方式由 config 决定:
- *   REMOTE_SRC_KEYBOARD — 本地 WASD
- *   REMOTE_SRC_UDP      — 手机/手柄 WiFi
- * UDP 协议: 8字节 (throttle:f32 + steering:f32), 小端
- */
+/* ================ 模式: 正常飞行 ================ */
 
 static int mode_run(void)
 {
     if (sys_init() != 0) return -1;
 
-    /* 遥控初始化 */
+    /* IMU */
+    imu_icm20948_register();
+    imu_config_t imu_cfg = IMU_CONFIG_DEFAULT;
+    if (imu_init(&imu_cfg) != 0) {
+        fprintf(stderr, "[APP] IMU init failed\n");
+        sys_deinit();
+        return -2;
+    }
+
+    /* 姿态滤波器 */
+    filter_config_t f_cfg = FILTER_CONFIG_DEFAULT;
+    filter_init(&f_cfg);
+
+    /* 遥控 */
     g_remote_cfg = (remote_config_t)REMOTE_CONFIG_DEFAULT;
+#if CFG_REMOTE_SRC == 1
+    g_remote_cfg.source = REMOTE_SRC_UDP;
+#endif
     remote_init(&g_remote_cfg);
 
-    /* 升降机构 (暂不启用) */
-#if CFG_LIFT_ENABLED
-    lift_config_t lift_cfg = LIFT_CONFIG_DEFAULT;
-    lift_init(&g_lift, &lift_cfg);
-#endif
-
-    printf("\n[APP] 差速驱动已启动!\n");
-    printf("[APP] WASD/UDP 遥控, 空格=停, X=退出\n\n");
+    printf("\n[APP] 四旋翼飞控已启动!\n");
+    printf("[APP] R=解锁/上锁  WASD=姿态  QE=偏航  1-9=油门  0/空格=停  X=急停\n\n");
 
     /* === 主控制循环 === */
     int tick = 0;
     struct timespec t0;
     clock_gettime(CLOCK_MONOTONIC, &t0);
+    long interval_us = 1000000L / CFG_CONTROL_HZ;
 
-    long interval_us = 1000000L / CFG_DIFF_CONTROL_HZ;
+    bool armed = false;
+    bool was_armed = false;
 
     while (g_running) {
-        /* 1. 轮询遥控输入 */
+        /* 1. 读取 IMU */
+        imu_sample_t sample;
+        int imu_ok = imu_read(&sample);
+
+        /* 2. 姿态估计 */
+        attitude_t att = {0};
+        if (imu_ok == 0) {
+            att = filter_update(&sample, CFG_CONTROL_DT);
+        }
+
+        /* 3. 安全检查: 倾斜过大 → 急停 */
+        if (armed && (fabsf(att.roll) > CFG_QUAD_MAX_TILT_EMERGENCY ||
+                      fabsf(att.pitch) > CFG_QUAD_MAX_TILT_EMERGENCY)) {
+            fprintf(stderr, "[APP] *** TILT EMERGENCY *** roll=%.1f pitch=%.1f\n",
+                    att.roll, att.pitch);
+            armed = false;
+            quad_mixer_disarm(&g_mixer);
+            attitude_enable(&g_att, false);
+        }
+
+        /* 4. 遥控输入 */
         remote_cmd_t cmd;
         remote_poll(&cmd);
 
@@ -259,25 +320,59 @@ static int mode_run(void)
             break;
         }
 
-        diff_drive_set(&g_dd, cmd.throttle, cmd.steering);
+        /* 解锁/上锁 */
+        if (cmd.arm_switch && !was_armed) {
+            armed = true;
+            quad_mixer_arm(&g_mixer);
+            attitude_enable(&g_att, true);
+            printf("[APP] *** ARMED ***\n");
+        } else if (!cmd.arm_switch && was_armed) {
+            armed = false;
+            quad_mixer_disarm(&g_mixer);
+            attitude_enable(&g_att, false);
+            printf("[APP] *** DISARMED ***\n");
+        }
+        was_armed = cmd.arm_switch;
 
-        /* 2. 更新电机输出 */
-        diff_drive_update(&g_dd, CFG_DIFF_CONTROL_DT);
+        /* 5. 姿态控制 */
+        if (imu_ok == 0 && armed) {
+            attitude_set_input(&g_att, cmd.throttle,
+                               cmd.roll, cmd.pitch, cmd.yaw);
+            const attitude_output_t *att_out =
+                attitude_update(&g_att, &att, &sample, CFG_CONTROL_DT);
 
-        /* 3. 升降机构更新 */
-#if CFG_LIFT_ENABLED
-        lift_update(&g_lift, CFG_DIFF_CONTROL_DT);
-#endif
+            /* 6. 混控 */
+            mixer_output_t mix_out = quad_mixer_update(&g_mixer,
+                att_out->throttle,
+                att_out->roll,
+                att_out->pitch,
+                att_out->yaw);
+
+            /* 7. 驱动电机 */
+            for (int i = 0; i < QUAD_NUM_MOTORS; i++) {
+                motor_set(&g_motors[i], mix_out.motor[i]);
+            }
 
 #if CFG_ENABLE_CONSOLE_LOG
-        if (tick % (CFG_DIFF_CONTROL_HZ / 2) == 0) {
-            printf("thr=%+5.2f steer=%+5.2f\n",
-                   g_dd.throttle, g_dd.steering);
-        }
+            if (tick % (CFG_CONTROL_HZ / 5) == 0) {
+                /* 每 5Hz 打印一次 */
+                printf("R:%+6.1f P:%+6.1f Y:%+6.1f | thr:%.2f [% .2f % .2f % .2f % .2f]\n",
+                       att.roll, att.pitch, att.yaw,
+                       att_out->throttle,
+                       mix_out.motor[0], mix_out.motor[1],
+                       mix_out.motor[2], mix_out.motor[3]);
+            }
 #endif
+        } else if (!armed) {
+            /* 未解锁: 所有电机零输出 */
+            for (int i = 0; i < QUAD_NUM_MOTORS; i++) {
+                motor_set(&g_motors[i], 0.0f);
+            }
+        }
 
         tick++;
 
+        /* 定时睡眠 */
         struct timespec t_next = t0;
         long add_ns = (long)tick * interval_us * 1000L;
         t_next.tv_sec  += add_ns / 1000000000L;
@@ -296,8 +391,9 @@ static int mode_run(void)
         }
     }
 
-    /* 恢复终端 + 清理 */
+    /* 清理 */
     remote_deinit();
+    imu_deinit();
     sys_deinit();
     return 0;
 }
@@ -312,6 +408,7 @@ int app_run(app_mode_t mode)
     switch (mode) {
         case APP_MODE_CALIBRATE: return mode_calibrate();
         case APP_MODE_DEBUG:     return mode_debug();
+        case APP_MODE_ESC_CAL:   return mode_esc_cal();
         case APP_MODE_RUN:       return mode_run();
     }
     return 1;
