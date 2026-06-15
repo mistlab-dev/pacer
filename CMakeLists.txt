@@ -5,6 +5,29 @@ set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
+# 目标板选择
+set(TARGET_BOARD "rpi_zero2w" CACHE STRING "Target board: rpi_zero (ARMv6) or rpi_zero2w (ARMv8)")
+set_property(CACHE TARGET_BOARD PROPERTY STRINGS "rpi_zero" "rpi_zero2w")
+
+if(TARGET_BOARD STREQUAL "rpi_zero")
+    # 原版 Zero: 单核 ARMv6 (BCM2835) — 交叉编译或板上编译
+    add_compile_definitions(TARGET_RPI_ZERO=1 BOARD_SINGLE_CORE=1)
+    # ARM march 选项仅在交叉编译工具链下生效
+    if(CMAKE_C_COMPILER_TARGET OR CMAKE_CROSSCOMPILING)
+        add_compile_options(-march=armv6 -mfpu=vfp -mfloat-abi=hard)
+    endif()
+    message(STATUS "Target: Raspberry Pi Zero (ARMv6, single-core, 200Hz control)")
+elseif(TARGET_BOARD STREQUAL "rpi_zero2w")
+    # Zero 2W: 四核 ARMv8 (BCM2837A0)
+    add_compile_definitions(TARGET_RPI_ZERO2W=1 BOARD_QUAD_CORE=1)
+    if(CMAKE_CROSSCOMPILING)
+        add_compile_options(-march=armv8-a -mtune=cortex-a53)
+    endif()
+    message(STATUS "Target: Raspberry Pi Zero 2W (ARMv8, quad-core, 400Hz control)")
+else()
+    message(FATAL_ERROR "Unknown TARGET_BOARD: ${TARGET_BOARD}")
+endif()
+
 # 警告
 add_compile_options(-Wall -Wextra -Wshadow -Wundef)
 

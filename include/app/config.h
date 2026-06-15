@@ -12,13 +12,28 @@
 
 #define CFG_IMU_I2C_BUS           1       /* 树莓派 I2C-1 */
 #define CFG_IMU_I2C_ADDR          0x68    /* ICM20948 AD0=0 */
-#define CFG_IMU_SAMPLE_HZ         400     /* 采样率 (四旋翼需要更高) */
+/* IMU 采样率: Zero 2W 400Hz, Zero 200Hz */
+#if defined(TARGET_RPI_ZERO2W)
+#define CFG_IMU_SAMPLE_HZ         400
+#elif defined(TARGET_RPI_ZERO)
+#define CFG_IMU_SAMPLE_HZ         200
+#else
+#define CFG_IMU_SAMPLE_HZ         400
+#endif
 #define CFG_IMU_ACCEL_RANGE_G     8       /* ±8g */
 #define CFG_IMU_GYRO_RANGE_DPS    1000    /* ±1000°/s */
 
 /* ==================== 控制频率 ==================== */
 
-#define CFG_CONTROL_HZ            400     /* 主循环频率 */
+/* Zero 2W (四核): 400Hz, Zero (单核): 200Hz */
+#if defined(TARGET_RPI_ZERO2W)
+#define CFG_CONTROL_HZ            400
+#elif defined(TARGET_RPI_ZERO)
+#define CFG_CONTROL_HZ            200
+#else
+#define CFG_CONTROL_HZ            400     /* 默认 400Hz */
+#endif
+
 #define CFG_CONTROL_DT            (1.0f / CFG_CONTROL_HZ)
 #define CFG_CONTROL_INTERVAL_US   (1000000 / CFG_CONTROL_HZ)
 
@@ -29,7 +44,14 @@
 /* PCA9685 */
 #define CFG_PCA9685_I2C_BUS       1
 #define CFG_PCA9685_I2C_ADDR      0x40
-#define CFG_PCA9685_PWM_HZ        400     /* 四旋翼 ESC 常用 400Hz (Oneshot125 可更高) */
+/* PCA9685 PWM: Zero 2W 400Hz, Zero 200Hz */
+#if defined(TARGET_RPI_ZERO2W)
+#define CFG_PCA9685_PWM_HZ        400
+#elif defined(TARGET_RPI_ZERO)
+#define CFG_PCA9685_PWM_HZ        200
+#else
+#define CFG_PCA9685_PWM_HZ        400
+#endif
 
 /* ESC 四旋翼通道 */
 #define CFG_ESC_FL_CH              0      /* 前左 — 顺时针 (CW) */

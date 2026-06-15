@@ -43,11 +43,6 @@
  *   50Hz  → period = 20000μs → 1000μs ≈ 205 ticks, 2000μs ≈ 410 ticks
  *   400Hz → period = 2500μs  → 1000μs ≈ 1638 ticks, 2000μs ≈ 3277 ticks
  */
-static void pca_write_pwm(int channel, int duty)
-{
-    hal_pca9685_set_pwm(channel, (uint16_t)duty, (uint16_t)CFG_MOTOR_PWM_RANGE);
-}
-
 static uint16_t esc_power_to_duty(float power)
 {
     if (power >  1.0f) power =  1.0f;
@@ -61,6 +56,11 @@ static uint16_t esc_power_to_duty(float power)
     uint16_t ticks = (uint16_t)(pulse_us * 4096.0f / period_us);
 
     return ticks;
+}
+
+static void pca_write_pwm(int channel, int duty)
+{
+    hal_pca9685_set_pwm(channel, (uint16_t)duty, (uint16_t)CFG_MOTOR_PWM_RANGE);
 }
 
 /* ---------- 公开接口 ---------- */
@@ -107,7 +107,7 @@ int motor_init_esc(motor_t *m, int signal_ch, bool inverted)
     m->armed     = false;
     m->ready     = false;
 
-    /* 初始输出中位 (1500μs) — 安全 */
+    /* 初始输出最低油门 (1000μs) — 待命 */
     hal_pca9685_set_pwm(signal_ch, esc_power_to_duty(0.0f), 4095);
 
     m->ready = true;
@@ -166,7 +166,7 @@ void motor_brake(motor_t *m)
     if (!m->ready) return;
 
     if (m->type == MOTOR_TYPE_ESC) {
-        /* ESC 没有传统刹车, 输出中位停止 */
+        /* ESC 刹车 = 最低油门 (0) */
         hal_pca9685_set_pwm(m->pin_a, esc_power_to_duty(0.0f), 4095);
     } else if (m->type == MOTOR_TYPE_DC_GPIO) {
         hal_pwm_write(m->pin_a, m->pwm_range);
