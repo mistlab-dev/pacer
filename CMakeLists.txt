@@ -44,6 +44,9 @@ endif()
 set(SRCS
     src/main.c
     src/app/app.c
+    src/app/preflight.c
+    src/app/flight_phase.c
+    src/app/imu_debug.c
     src/hal/hal_gpio.c
     src/hal/hal_i2c.c
     src/hal/hal_pca9685.c
@@ -91,6 +94,7 @@ if(BUILD_TESTS)
     add_executable(test_motor
         tests/test_motor.c
         src/motor/motor.c
+        src/hal/hal_pca9685.c
         tests/mocks/mock_hal_gpio.c
         tests/mocks/mock_hal_i2c.c
     )

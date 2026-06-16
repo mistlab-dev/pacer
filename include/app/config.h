@@ -112,6 +112,16 @@
 #define CFG_USE_MADGWICK           1      /* 1=Madgwick, 0=互补滤波 */
 #define CFG_ENABLE_CONSOLE_LOG     1      /* 控制台打印调试 */
 
+/* ==================== 飞行阶段 ==================== */
+
+#define CFG_TAKEOFF_THROTTLE       0.55f  /* 起飞油门 (略高于悬停) */
+#define CFG_HOVER_THROTTLE         0.50f  /* 悬停油门 */
+#define CFG_TAKEOFF_RAMP_RATE      0.3f   /* 起飞油门爬升率 (/s) */
+#define CFG_LANDING_DESCENT_RATE   0.15f  /* 降落油门下降率 (/s) */
+#define CFG_LANDING_THROTTLE_MIN   0.05f  /* 降落触地油门阈值 */
+#define CFG_HOVER_MAX_DRIFT_DEG    15.0f  /* 悬停最大漂移角度 */
+#define CFG_PREFLIGHT_LEVEL_DEG    10.0f  /* 自检水平阈值 */
+
 /* ==================== 安全 ==================== */
 
 #define CFG_ARM_STICK_TIMEOUT_SEC  3.0f   /* 摇杆解锁窗口 */

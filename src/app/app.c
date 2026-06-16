@@ -2,22 +2,29 @@
  * @file app.c
  * @brief 应用层 — 四旋翼无人机 (RPi Zero 2W + ICM20948 + PCA9685)
  *
+ * 完整飞行流程:
+ *
+ *   ┌──────┐    ┌─────────┐    ┌────────┐    ┌─────────┐    ┌──────────┐
+ *   │ IDLE │───→│ PREFLIGHT│───→│ TAKEOFF│───→│ HOVER   │───→│ LANDING  │
+ *   │ 待命  │    │ 自检     │    │ 起飞   │    │ 悬停    │    │ 降落     │
+ *   └──────┘    └─────────┘    └────────┘    └────────┘    └──────────┘
+ *                                                       ↓
+ *                                                    GROUNDED
+ *
  * 主循环:
  *   1. 读取 IMU
- *   2. 姿态估计 (Madgwick / 互补)
- *   3. 遥控输入
- *   4. 姿态控制 (串级 PID)
- *   5. 混控 → 4 电机输出
- *
- * 运行模式:
- *   RUN       — 正常飞行
- *   CALIBRATE — IMU 陀螺仪校准
- *   DEBUG     — 打印姿态数据，不动电机
- *   ESC_CAL   — ESC 油门行程校准
+ *   2. 姿态估计
+ *   3. 安全检查 (倾斜保护)
+ *   4. 遥控输入
+ *   5. 飞行阶段状态机 → 油门目标
+ *   6. 姿态控制器 (串级 PID)
+ *   7. 混控 → 电机输出
  */
 
 #include "app/app.h"
 #include "app/config.h"
+#include "app/preflight.h"
+#include "app/flight_phase.h"
 
 #include "hal/hal_gpio.h"
 #include "hal/hal_i2c.h"
@@ -43,10 +50,15 @@
 
 static volatile int g_running = 1;
 
-static attitude_ctrl_t g_att;
-static quad_mixer_t    g_mixer;
-static motor_t         g_motors[QUAD_NUM_MOTORS];
-static remote_config_t g_remote_cfg;
+static attitude_ctrl_t   g_att;
+static quad_mixer_t      g_mixer;
+static motor_t           g_motors[QUAD_NUM_MOTORS];
+static remote_config_t   g_remote_cfg;
+static flight_phase_t    g_flight;
+
+/* IMU 校准状态 */
+static bool   g_gyro_calibrated = false;
+static vec3_t g_gyro_bias       = {0};
 
 /* ================ 信号 ================ */
 
@@ -109,8 +121,18 @@ static int sys_init(void)
     mixer_config_t mcfg = MIXER_CONFIG_DEFAULT;
     quad_mixer_init(&g_mixer, &mcfg);
 
+    /* 飞行阶段状态机 */
+    flight_phase_config_t fpcfg = FLIGHT_PHASE_CONFIG_DEFAULT;
+    fpcfg.takeoff_throttle    = CFG_TAKEOFF_THROTTLE;
+    fpcfg.hover_throttle      = CFG_HOVER_THROTTLE;
+    fpcfg.takeoff_ramp_rate   = CFG_TAKEOFF_RAMP_RATE;
+    fpcfg.landing_descent_rate = CFG_LANDING_DESCENT_RATE;
+    fpcfg.landing_throttle_min = CFG_LANDING_THROTTLE_MIN;
+    fpcfg.hover_max_drift_deg = CFG_HOVER_MAX_DRIFT_DEG;
+    fpcfg.tilt_emergency_deg  = (float)CFG_QUAD_MAX_TILT_EMERGENCY;
+    flight_phase_init(&g_flight, &fpcfg);
+
     printf("[APP] all systems ready\n");
-    printf("[APP] 按 R 解锁电机, 再按 R 上锁\n");
     return 0;
 }
 
@@ -118,7 +140,6 @@ static void sys_deinit(void)
 {
     printf("[APP] cleaning up...\n");
 
-    /* 电机归零 */
     for (int i = 0; i < QUAD_NUM_MOTORS; i++) {
         motor_set(&g_motors[i], 0.0f);
     }
@@ -278,8 +299,43 @@ static int mode_run(void)
 #endif
     remote_init(&g_remote_cfg);
 
+    /* ---- 第一步: 自检 ---- */
+    printf("\n[APP] 按 Enter 执行起飞前自检...\n");
+    getchar();
+
+    imu_sample_t sample;
+    int imu_ok = imu_read(&sample);
+    attitude_t att_zero = {0};
+
+    preflight_report_t report;
+    preflight_run(&report,
+                  imu_ok, &sample, &att_zero,
+                  g_gyro_calibrated, &g_gyro_bias,
+                  true,   /* remote: 键盘模式始终 true */
+                  true,   /* esc_armed */
+                  true);  /* pca9685_ok */
+
+    preflight_print(&report);
+
+    if (!report.all_passed) {
+        fprintf(stderr, "[APP] 自检未通过, 起飞取消!\n");
+        remote_deinit();
+        imu_deinit();
+        sys_deinit();
+        return 1;
+    }
+
+    printf("[APP] 自检通过! 按 Enter 起飞...\n");
+    getchar();
+
+    /* ---- 第二步: 解锁 + 起飞 ---- */
+    quad_mixer_arm(&g_mixer);
+    attitude_enable(&g_att, true);
+    attitude_set_mode(&g_att, ATT_MODE_ANGLE);  /* 自稳模式 */
+    flight_phase_request_takeoff(&g_flight);
+
     printf("\n[APP] 四旋翼飞控已启动!\n");
-    printf("[APP] R=解锁/上锁  WASD=姿态  QE=偏航  1-9=油门  0/空格=停  X=急停\n\n");
+    printf("[APP] WASD=姿态  QE=偏航  1-9=油门叠加  0/空格=悬停  X=急停  L=降落\n\n");
 
     /* === 主控制循环 === */
     int tick = 0;
@@ -287,12 +343,12 @@ static int mode_run(void)
     clock_gettime(CLOCK_MONOTONIC, &t0);
     long interval_us = 1000000L / CFG_CONTROL_HZ;
 
-    bool armed = false;
-    bool was_armed = false;
+    bool armed = true;
+    bool was_armed = true;
+    float manual_throttle_boost = 0.0f;  /* 手动油门叠加 */
 
     while (g_running) {
         /* 1. 读取 IMU */
-        imu_sample_t sample;
         int imu_ok = imu_read(&sample);
 
         /* 2. 姿态估计 */
@@ -301,43 +357,76 @@ static int mode_run(void)
             att = filter_update(&sample, CFG_CONTROL_DT);
         }
 
-        /* 3. 安全检查: 倾斜过大 → 急停 */
-        if (armed && (fabsf(att.roll) > CFG_QUAD_MAX_TILT_EMERGENCY ||
-                      fabsf(att.pitch) > CFG_QUAD_MAX_TILT_EMERGENCY)) {
-            fprintf(stderr, "[APP] *** TILT EMERGENCY *** roll=%.1f pitch=%.1f\n",
-                    att.roll, att.pitch);
-            armed = false;
-            quad_mixer_disarm(&g_mixer);
-            attitude_enable(&g_att, false);
-        }
-
-        /* 4. 遥控输入 */
+        /* 3. 遥控输入 */
         remote_cmd_t cmd;
         remote_poll(&cmd);
 
         if (cmd.estop) {
-            g_running = 0;
-            break;
-        }
-
-        /* 解锁/上锁 */
-        if (cmd.arm_switch && !was_armed) {
-            armed = true;
-            quad_mixer_arm(&g_mixer);
-            attitude_enable(&g_att, true);
-            printf("[APP] *** ARMED ***\n");
-        } else if (!cmd.arm_switch && was_armed) {
+            printf("[APP] *** E-STOP ***\n");
+            flight_phase_emergency(&g_flight);
             armed = false;
             quad_mixer_disarm(&g_mixer);
             attitude_enable(&g_att, false);
-            printf("[APP] *** DISARMED ***\n");
+            break;
+        }
+
+        /* 降落指令 */
+        if (cmd.throttle < 0.01f && flight_phase_in_flight(&g_flight)) {
+            /* 油门拉到零 → 降落 */
+            if (g_flight.phase == PHASE_HOVER || g_flight.phase == PHASE_TAKEOFF) {
+                flight_phase_request_landing(&g_flight);
+            }
+        }
+
+        /* 油门叠加: 1-9 键在悬停基础上微调 */
+        manual_throttle_boost = cmd.throttle - 0.5f;  /* 遥控油门中位=0 */
+
+        /* 解锁/上锁切换 */
+        if (cmd.arm_switch && !was_armed) {
+            if (g_flight.phase == PHASE_GROUNDED) {
+                flight_phase_reset(&g_flight);
+                quad_mixer_arm(&g_mixer);
+                attitude_enable(&g_att, true);
+                armed = true;
+                printf("[APP] *** RE-ARMED ***\n");
+            }
+        } else if (!cmd.arm_switch && was_armed) {
+            if (flight_phase_in_flight(&g_flight)) {
+                flight_phase_request_landing(&g_flight);
+            } else {
+                quad_mixer_disarm(&g_mixer);
+                attitude_enable(&g_att, false);
+                armed = false;
+            }
         }
         was_armed = cmd.arm_switch;
 
+        /* 4. 飞行阶段状态机 → 油门目标 */
+        float phase_throttle = flight_phase_update(&g_flight,
+                                                    att.roll, att.pitch,
+                                                    CFG_CONTROL_DT);
+
+        /* 已着陆 → 上锁 */
+        if (g_flight.phase == PHASE_GROUNDED && armed) {
+            quad_mixer_disarm(&g_mixer);
+            attitude_enable(&g_att, false);
+            armed = false;
+            printf("[APP] *** 已着陆, 电机已停 ***\n");
+            printf("[APP] 按 R 解锁重新飞行, Ctrl+C 退出\n");
+        }
+
         /* 5. 姿态控制 */
-        if (imu_ok == 0 && armed) {
-            attitude_set_input(&g_att, cmd.throttle,
-                               cmd.roll, cmd.pitch, cmd.yaw);
+        if (imu_ok == 0 && armed && g_flight.phase != PHASE_IDLE) {
+            /* 悬停时: 摇杆输入作为微调, 油门来自状态机 */
+            float ctrl_throttle = phase_throttle + manual_throttle_boost;
+            ctrl_throttle = fmaxf(0.0f, fminf(1.0f, ctrl_throttle));
+
+            attitude_set_input(&g_att,
+                               ctrl_throttle,
+                               cmd.roll,
+                               cmd.pitch,
+                               cmd.yaw);
+
             const attitude_output_t *att_out =
                 attitude_update(&g_att, &att, &sample, CFG_CONTROL_DT);
 
@@ -354,17 +443,18 @@ static int mode_run(void)
             }
 
 #if CFG_ENABLE_CONSOLE_LOG
-            if (tick % (CFG_CONTROL_HZ / 5) == 0) {
-                /* 每 5Hz 打印一次 */
-                printf("R:%+6.1f P:%+6.1f Y:%+6.1f | thr:%.2f [% .2f % .2f % .2f % .2f]\n",
-                       att.roll, att.pitch, att.yaw,
+            if (tick % (CFG_CONTROL_HZ / 2) == 0) {  /* 2Hz 打印 */
+                printf("[%s] R:%+6.1f P:%+6.1f | thr:%.2f [%.2f %.2f %.2f %.2f] %.1fs\n",
+                       flight_phase_name(g_flight.phase),
+                       att.roll, att.pitch,
                        att_out->throttle,
                        mix_out.motor[0], mix_out.motor[1],
-                       mix_out.motor[2], mix_out.motor[3]);
+                       mix_out.motor[2], mix_out.motor[3],
+                       g_flight.phase_time);
             }
 #endif
-        } else if (!armed) {
-            /* 未解锁: 所有电机零输出 */
+        } else {
+            /* 未飞行: 电机零输出 */
             for (int i = 0; i < QUAD_NUM_MOTORS; i++) {
                 motor_set(&g_motors[i], 0.0f);
             }

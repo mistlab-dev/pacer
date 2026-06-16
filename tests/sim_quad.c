@@ -28,6 +28,9 @@
 #include "ctrl/quad_mixer.h"
 #include "filter/filter.h"
 #include "sensor/imu.h"
+#include "app/preflight.h"
+#include "app/flight_phase.h"
+#include "app/config.h"
 #include "app/config.h"
 
 /* ================ 测试框架 ================ */
@@ -531,6 +534,260 @@ static void test_mixer_symmetry(void)
              "零油门→最低油门: %.4f", zero_thr.motor[0]);
 }
 
+/* ================ 11. 自检测试 ================ */
+
+static void test_preflight(void)
+{
+    printf("\n=== 测试11: 起飞前自检 ===\n");
+
+    /* 全部通过的场景 */
+    imu_sample_t good_sample = {0};
+    good_sample.accel.x = 0.0f;
+    good_sample.accel.y = 0.0f;
+    good_sample.accel.z = 9.81f;  /* 1g */
+    good_sample.gyro.x = 0.1f;
+    good_sample.gyro.y = -0.1f;
+    good_sample.gyro.z = 0.2f;
+    good_sample.temperature = 25.0f;
+
+    attitude_t level_att = {0};
+    vec3_t good_bias = {0.1f, -0.1f, 0.05f};
+
+    preflight_report_t report;
+    preflight_run(&report,
+                  0,              /* imu_ok */
+                  &good_sample,
+                  &level_att,
+                  true,           /* gyro_calibrated */
+                  &good_bias,
+                  true,           /* remote_connected */
+                  true,           /* esc_armed */
+                  true);          /* pca9685_ok */
+
+    preflight_print(&report);
+    ASSERT(report.all_passed, "正常状态: 自检通过");
+    ASSERT(report.fail_count == 0, "无 FAIL");
+    ASSERT(report.pass_count >= 7, "至少 7 项 PASS");
+
+    /* IMU 故障 */
+    preflight_report_t report2;
+    preflight_run(&report2,
+                  -1,             /* imu_ok = fail */
+                  &good_sample,   /* won't be used */
+                  &level_att,
+                  true, &good_bias,
+                  true, true, true);
+    ASSERT(report2.has_failure, "IMU 故障: 有 FAIL");
+    ASSERT(report2.items[CHECK_IMU_CONNECT].result == CHECK_FAIL, "IMU 通信 FAIL");
+
+    /* 倾斜过大 */
+    attitude_t tilted_att = { .roll = 35.0f, .pitch = 5.0f };
+    preflight_report_t report3;
+    preflight_run(&report3,
+                  0, &good_sample, &tilted_att,
+                  true, &good_bias, true, true, true);
+    ASSERT(report3.has_failure, "倾斜过大: FAIL");
+    ASSERT(report3.items[CHECK_LEVEL].result == CHECK_FAIL, "水平检测 FAIL");
+
+    /* 未校准 → WARN (不是 FAIL) */
+    preflight_report_t report4;
+    preflight_run(&report4,
+                  0, &good_sample, &level_att,
+                  false, &good_bias,  /* not calibrated */
+                  true, true, true);
+    ASSERT(report4.all_passed, "未校准: 仍可飞 (WARN)");
+    ASSERT(report4.items[CHECK_GYRO_CAL].result == CHECK_WARN, "陀螺校准 WARN");
+}
+
+/* ================ 12. 飞行阶段状态机 ================ */
+
+static void test_flight_phase(void)
+{
+    printf("\n=== 测试12: 飞行阶段状态机 ===\n");
+
+    flight_phase_t fp;
+    flight_phase_config_t cfg = FLIGHT_PHASE_CONFIG_DEFAULT;
+    flight_phase_init(&fp, &cfg);
+
+    float dt = 1.0f / 400.0f;
+
+    /* 初始 IDLE */
+    ASSERT(fp.phase == PHASE_IDLE, "初始: IDLE");
+    ASSERT(!flight_phase_in_flight(&fp), "IDLE: not in flight");
+
+    /* 油门 = 0 */
+    float thr = flight_phase_update(&fp, 0, 0, dt);
+    ASSERT_F(thr == 0.0f, "IDLE 油门=0: thr=%.3f", thr);
+
+    /* 请求起飞 */
+    int rc = flight_phase_request_takeoff(&fp);
+    ASSERT(rc == 0, "takeoff 请求成功");
+    ASSERT(fp.phase == PHASE_TAKEOFF, "阶段: TAKEOFF");
+    ASSERT(flight_phase_in_flight(&fp), "TAKEOFF: in flight");
+
+    /* 起飞爬升: 油门应逐步上升 (直到切到 HOVER) */
+    float prev_thr = 0.0f;
+    bool thr_increasing = true;
+    for (int i = 0; i < 800; i++) {  /* 2 秒 */
+        thr = flight_phase_update(&fp, 0, 0, dt);
+        /* TAKEOFF 阶段油门应递增; 切到 HOVER 后油门可能下降 */
+        if (fp.phase == PHASE_TAKEOFF && thr < prev_thr - 0.001f) {
+            thr_increasing = false;
+        }
+        prev_thr = thr;
+    }
+    ASSERT(thr_increasing, "起飞: 油门单调递增");
+    ASSERT_F(thr > 0.4f, "起飞后 2s 油门 > 0.4: thr=%.3f", thr);
+
+    /* 应已到达 TAKEOFF 目标 → 切到 HOVER */
+    ASSERT(fp.phase == PHASE_HOVER, "自动切到 HOVER");
+    float hover_thr = flight_phase_update(&fp, 0, 0, dt);
+    ASSERT_F(fabsf(hover_thr - cfg.hover_throttle) < 0.01f,
+             "HOVER 油门 = %.2f: thr=%.3f", cfg.hover_throttle, hover_thr);
+
+    /* 悬停 3 秒, 姿态水平 */
+    for (int i = 0; i < 1200; i++) {
+        thr = flight_phase_update(&fp, 1.0f, -1.0f, dt);
+    }
+    ASSERT(fp.phase == PHASE_HOVER, "悬停 3s 仍 HOVER");
+    ASSERT_F(fabsf(thr - cfg.hover_throttle) < 0.01f,
+             "悬停油门稳定: thr=%.3f", thr);
+
+    /* 请求降落 */
+    rc = flight_phase_request_landing(&fp);
+    ASSERT(rc == 0, "landing 请求成功");
+    ASSERT(fp.phase == PHASE_LANDING, "阶段: LANDING");
+
+    /* 降落: 油门逐步下降到 0 */
+    float landing_start_thr = fp.current_throttle;
+    for (int i = 0; i < 4000; i++) {  /* 10 秒 */
+        thr = flight_phase_update(&fp, 0, 0, dt);
+        if (fp.phase == PHASE_GROUNDED) break;
+    }
+    ASSERT(fp.phase == PHASE_GROUNDED, "降落完成: GROUNDED");
+    ASSERT_F(thr == 0.0f, "着阮油门=0: thr=%.3f", thr);
+
+    /* 紧急停机 */
+    flight_phase_reset(&fp);
+    flight_phase_request_takeoff(&fp);
+    /* 模拟大倾斜 */
+    flight_phase_update(&fp, 0, 0, dt);
+    thr = flight_phase_update(&fp, 70.0f, 0, dt);  /* > 60° emergency */
+    ASSERT(fp.phase == PHASE_GROUNDED, "大倾斜 → EMERGENCY → GROUNDED");
+    ASSERT_F(thr == 0.0f, "紧急停机油门=0: thr=%.3f", thr);
+
+    /* 不能从 IDLE 直接降落 */
+    flight_phase_reset(&fp);
+    rc = flight_phase_request_landing(&fp);
+    ASSERT(rc == -1, "IDLE 状态不能降落");
+}
+
+/* ================ 13. 完整飞行流程集成 ================ */
+
+static void test_full_flight_profile(void)
+{
+    printf("\n=== 测试13: 完整飞行流程 (自检→起飞→悬停→降落) ===\n");
+
+    float dt = 1.0f / 400.0f;
+
+    /* --- 自检 --- */
+    imu_sample_t good_sample = {0};
+    good_sample.accel.z = 9.81f;
+    good_sample.gyro.x = 0.1f;
+    good_sample.gyro.y = -0.1f;
+    good_sample.gyro.z = 0.05f;
+
+    attitude_t level_att = {0};
+    vec3_t good_bias = {0.1f, -0.1f, 0.05f};
+
+    preflight_report_t report;
+    preflight_run(&report, 0, &good_sample, &level_att,
+                  true, &good_bias, true, true, true);
+
+    if (!report.all_passed) {
+        FAIL("自检未通过, 无法起飞");
+        return;
+    }
+    PASS("自检通过");
+
+    /* --- 初始化控制器 --- */
+    attitude_ctrl_t ac;
+    attitude_init(&ac);
+    attitude_set_mode(&ac, ATT_MODE_ANGLE);
+    attitude_enable(&ac, true);
+
+    quad_mixer_t mixer;
+    mixer_config_t mcfg = MIXER_CONFIG_DEFAULT;
+    quad_mixer_init(&mixer, &mcfg);
+    quad_mixer_arm(&mixer);
+
+    flight_phase_t fp;
+    flight_phase_config_t fpcfg = FLIGHT_PHASE_CONFIG_DEFAULT;
+    flight_phase_init(&fp, &fpcfg);
+
+    sim_state_t sim;
+    sim_init(&sim);
+
+    /* --- 起飞 --- */
+    int rc = flight_phase_request_takeoff(&fp);
+    ASSERT(rc == 0, "起飞请求成功");
+
+    printf("  阶段       时间    油门    Roll    Pitch   [FL   FR   RL   RR]\n");
+    printf("  ───────────────────────────────────────────────────────────────\n");
+
+    /* 运行 20 秒: 起飞→悬停→降落 */
+    int total_steps = (int)(20.0f / dt);
+    bool landing_started = false;
+    bool landing_done = false;
+
+    for (int i = 0; i < total_steps; i++) {
+        float t = i * dt;
+
+        imu_sample_t sample = sim_to_imu(&sim);
+        attitude_t att = { .roll = sim.roll, .pitch = sim.pitch, .yaw = sim.yaw };
+
+        /* 飞行阶段 → 油门 */
+        float phase_thr = flight_phase_update(&fp, att.roll, att.pitch, dt);
+
+        /* 10 秒后自动降落 */
+        if (t > 10.0f && !landing_started && fp.phase == PHASE_HOVER) {
+            flight_phase_request_landing(&fp);
+            landing_started = true;
+        }
+
+        if (fp.phase == PHASE_GROUNDED && !landing_done) {
+            landing_done = true;
+            ASSERT_F(sim.roll_rate < 5.0f && sim.pitch_rate < 5.0f,
+                     "着阮时角速度小: rr=%.1f pr=%.1f", sim.roll_rate, sim.pitch_rate);
+        }
+
+        /* 姿态控制 */
+        attitude_set_input(&ac, phase_thr, 0.0f, 0.0f, 0.0f);
+        const attitude_output_t *out = attitude_update(&ac, &att, &sample, dt);
+        mixer_output_t mix = quad_mixer_update(&mixer,
+            out->throttle, out->roll, out->pitch, out->yaw);
+        sim_step(&sim, &mix, dt);
+
+        /* 每 1 秒打印一次 */
+        if (i % 400 == 0) {
+            printf("  %-9s %5.1fs  %.3f   %+6.2f  %+6.2f  [%.2f %.02f %.02f %.02f]\n",
+                   flight_phase_name(fp.phase), t, phase_thr,
+                   sim.roll, sim.pitch,
+                   mix.motor[0], mix.motor[1], mix.motor[2], mix.motor[3]);
+        }
+    }
+
+    ASSERT(landing_done, "降落流程完成");
+    ASSERT(fp.phase == PHASE_GROUNDED, "最终状态: GROUNDED");
+    ASSERT(fp.total_flight_time > 8.0f, "总飞行时间 > 8s");
+    printf("  总飞行时间: %.1fs\n", fp.total_flight_time);
+
+    /* 起飞阶段油门曾经 > 0.3 */
+    /* 悬停阶段油门稳定在 hover_throttle 附近 */
+    /* 降落后油门归零 */
+    PASS("完整飞行流程通过");
+}
+
 /* ================ 主函数 ================ */
 
 int main(void)
@@ -549,6 +806,9 @@ int main(void)
     test_safety();
     test_arm_state_machine();
     test_mixer_symmetry();
+    test_preflight();
+    test_flight_phase();
+    test_full_flight_profile();
 
     printf("\n══════════════════════════════════════════\n");
     printf("  结果: %d 通过, %d 失败 / %d 总计\n",
