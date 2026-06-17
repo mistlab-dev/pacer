@@ -134,6 +134,21 @@
 #define CFG_ARM_STICK_TIMEOUT_SEC  3.0f   /* 摇杆解锁窗口 */
 #define CFG_NO_SIGNAL_TIMEOUT_SEC  0.5f   /* 无信号超时自动降落 */
 
+/* ==================== 看门狗 ==================== */
+
+#define CFG_WATCHDOG_TIMEOUT_MS    500     /* IWDG 超时 500ms */
+
+/* ==================== 电池 ==================== */
+
+/* 3S LiPo 电压阈值 */
+#define CFG_BATTERY_WARNING_V      10.5f   /* 低压警告 (3.5V/cell) */
+#define CFG_BATTERY_CRITICAL_V     9.6f    /* 严重低压 (3.2V/cell), 必须降落 */
+#define CFG_BATTERY_SAMPLE_HZ      10      /* 电池采样频率 */
+
+/* ==================== LED ==================== */
+
+#define CFG_LED_PIN                65      /* PE1 = 4*16+1 */
+
 /* ==================== FreeRTOS ==================== */
 
 #define CFG_TASK_CTRL_STACK        1024    /* 控制任务栈 (字) */

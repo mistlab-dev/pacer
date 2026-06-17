@@ -129,7 +129,12 @@ void attitude_enable(attitude_ctrl_t *ac, bool on);
 
 /* ---------- 运行时调参 ---------- */
 
-void attitude_set_rate_gains(float roll_kp, float roll_ki, float roll_kd,
+/**
+ * @brief 设置角速度环 PID 参数
+ * @param ac 控制器
+ */
+void attitude_set_rate_gains(attitude_ctrl_t *ac,
+                              float roll_kp, float roll_ki, float roll_kd,
                               float pitch_kp, float pitch_ki, float pitch_kd,
                               float yaw_kp, float yaw_ki, float yaw_kd);
 

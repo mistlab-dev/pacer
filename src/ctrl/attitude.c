@@ -198,13 +198,14 @@ void attitude_enable(attitude_ctrl_t *ac, bool on)
     ac->enabled = on;
 }
 
-void attitude_set_rate_gains(float roll_kp, float roll_ki, float roll_kd,
+void attitude_set_rate_gains(attitude_ctrl_t *ac,
+                              float roll_kp, float roll_ki, float roll_kd,
                               float pitch_kp, float pitch_ki, float pitch_kd,
                               float yaw_kp, float yaw_ki, float yaw_kd)
 {
-    (void)roll_kp; (void)roll_ki; (void)roll_kd;
-    (void)pitch_kp; (void)pitch_ki; (void)pitch_kd;
-    (void)yaw_kp; (void)yaw_ki; (void)yaw_kd;
+    pid_set_gains(&ac->pid_roll_rate, roll_kp, roll_ki, roll_kd);
+    pid_set_gains(&ac->pid_pitch_rate, pitch_kp, pitch_ki, pitch_kd);
+    pid_set_gains(&ac->pid_yaw_rate, yaw_kp, yaw_ki, yaw_kd);
 }
 
 const attitude_debug_t *attitude_get_debug(const attitude_ctrl_t *ac)

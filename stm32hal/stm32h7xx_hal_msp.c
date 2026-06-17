@@ -1,34 +1,52 @@
 /**
  * @file stm32h7xx_hal_msp.c
- * @brief STM32 HAL MSP — 底层外设初始化 (占位)
+ * @brief STM32 HAL MSP — 底层外设初始化
  *
- * 实际项目通常由 CubeMX 生成。这里提供必要的空实现，
- * GPIO/Clock 配置已分散到各 hal_*.c 中。
+ * uwTick / HAL_GetTick / HAL_IncTick / HAL_Delay 均由 HAL 库提供。
+ * SysTick 由 stm32h7xx_it.c 的 SysTick_Handler 驱动 (调用 HAL_IncTick)。
+ *
+ * 本文件提供 HAL_UART_MspInit — 配置 USART3 GPIO。
  */
 
 #include "stm32h7xx_hal.h"
 
-/* HAL 时基 — 使用 SysTick (FreeRTOS 会接管) */
-HAL_StatusTypeDef HAL_InitTick(uint32_t TickPriority)
-{
-    HAL_NVIC_SetPriority(SysTick_IRQn, TickPriority, 0);
-    HAL_NVIC_EnableIRQ(SysTick_IRQn);
-    return HAL_OK;
-}
+extern UART_HandleTypeDef huart3;
 
-void HAL_Delay(uint32_t Delay)
+/**
+ * @brief UART MSP 初始化 — 配置 USART3 GPIO (PD8 TX / PD9 RX)
+ */
+void HAL_UART_MspInit(UART_HandleTypeDef *huart)
 {
-    /* 简单循环延时 — 在调度器启动前使用 */
-    uint32_t cycles = Delay * (SystemCoreClock / 1000U / 8U);
-    for (uint32_t i = 0; i < cycles; i++) {
-        __NOP();
+    if (huart->Instance == USART3) {
+        __HAL_RCC_USART3_CLK_ENABLE();
+        __HAL_RCC_GPIOD_CLK_ENABLE();
+
+        GPIO_InitTypeDef gpio = {0};
+        gpio.Mode      = GPIO_MODE_AF_PP;
+        gpio.Alternate = GPIO_AF7_USART3;
+        gpio.Pull      = GPIO_PULLUP;
+        gpio.Speed     = GPIO_SPEED_FREQ_HIGH;
+
+        /* PD8 = USART3_TX */
+        gpio.Pin = GPIO_PIN_8;
+        HAL_GPIO_Init(GPIOD, &gpio);
+
+        /* PD9 = USART3_RX */
+        gpio.Pin = GPIO_PIN_9;
+        HAL_GPIO_Init(GPIOD, &gpio);
     }
 }
 
-uint32_t HAL_GetTick(void)
+/**
+ * @brief UART MSP 反初始化
+ */
+void HAL_UART_MspDeInit(UART_HandleTypeDef *huart)
 {
-    /* FreeRTOS 接管后使用 xTaskGetTickCount()
-     * 启动前用 DWT 计数器 */
-    static uint32_t counter = 0;
-    return counter++;
+    if (huart->Instance == USART3) {
+        __HAL_RCC_USART3_FORCE_RESET();
+        __HAL_RCC_USART3_RELEASE_RESET();
+
+        HAL_GPIO_DeInit(GPIOD, GPIO_PIN_8 | GPIO_PIN_9);
+        __HAL_RCC_USART3_CLK_DISABLE();
+    }
 }

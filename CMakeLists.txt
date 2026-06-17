@@ -58,6 +58,9 @@ set(PACER_SOURCES
     src/hal/hal_i2c.c
     src/hal/hal_gpio.c
     src/hal/hal_tim.c
+    src/hal/led.c
+    src/hal/watchdog.c
+    src/hal/battery.c
 
     stm32hal/hal/Src/stm32h7xx_hal.c
     stm32hal/hal/Src/stm32h7xx_hal_cortex.c
@@ -77,6 +80,9 @@ set(PACER_SOURCES
     stm32hal/hal/Src/stm32h7xx_hal_dma.c
     stm32hal/hal/Src/stm32h7xx_hal_dma_ex.c
     stm32hal/hal/Src/stm32h7xx_hal_exti.c
+    stm32hal/hal/Src/stm32h7xx_hal_adc.c
+    stm32hal/hal/Src/stm32h7xx_hal_adc_ex.c
+    stm32hal/hal/Src/stm32h7xx_hal_iwdg.c
 
     freertos/tasks.c
     freertos/queue.c

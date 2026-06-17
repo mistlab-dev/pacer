@@ -25,6 +25,9 @@
 #include "remote/remote.h"
 #include "hal/hal_gpio.h"
 #include "hal/hal_tim.h"
+#include "hal/led.h"
+#include "hal/watchdog.h"
+#include "hal/battery.h"
 #include "usart_printf.h"
 
 #include "stm32h7xx_hal.h"
@@ -62,6 +65,7 @@ static struct {
 
 static void check_safety(void)
 {
+    /* 1. 倾斜保护 */
     float tilt = sqrtf(g.attitude.roll * g.attitude.roll +
                        g.attitude.pitch * g.attitude.pitch);
     if (tilt > CFG_QUAD_MAX_TILT_EMERGENCY && g.flying) {
@@ -71,6 +75,23 @@ static void check_safety(void)
         motor_stop_all();
         g.emergency = true;
         g.flying    = false;
+        led_set_state(LED_BLINK_DOUBLE);
+        return;
+    }
+
+    /* 2. 电池低压保护 */
+    battery_status_t bat = battery_get_status();
+    if (bat == BATTERY_CRITICAL && g.flying) {
+        printf("[SAFETY] battery %.1fV CRITICAL → auto-land\r\n",
+               battery_get_voltage());
+        quad_mixer_stop(&g.mixer);
+        motor_stop_all();
+        g.flying    = false;
+        g.emergency = true;
+        led_set_state(LED_BLINK_DOUBLE);
+    } else if (bat == BATTERY_WARNING) {
+        /* 低压警告: 快闪 LED */
+        if (g.flying) led_set_state(LED_BLINK_FAST);
     }
 }
 
@@ -95,6 +116,9 @@ static void ctrl_task(void *arg)
 
     while (g.running) {
         vTaskDelayUntil(&last, period);
+
+        /* 0. 喂狗 */
+        watchdog_kick();
 
         /* 1. IMU */
         if (imu_read(&g.imu_sample) != 0) {
@@ -166,16 +190,42 @@ static void rx_task(void *arg)
 
         /* ---- 解锁/上锁/起飞/降落 逻辑 ---- */
 
-        /* 解锁: 油门<5% + yaw 左满 */
+        /* 紧急停止恢复: 油门<5% + yaw 左满 + pitch 前满 保持 2s */
+        static uint32_t emg_clear_start = 0;
+        if (g.emergency &&
+            rc_new.throttle < 0.05f &&
+            rc_new.yaw < -0.9f &&
+            rc_new.pitch > 0.9f) {
+            if (emg_clear_start == 0) {
+                emg_clear_start = HAL_GetTick();
+            } else if (HAL_GetTick() - emg_clear_start > 2000) {
+                printf("[APP] emergency cleared\r\n");
+                g.emergency = false;
+                g.armed = false;
+                emg_clear_start = 0;
+                led_set_state(LED_BLINK_SLOW);
+            }
+        } else {
+            emg_clear_start = 0;
+        }
+
+        /* 解锁: 油门<5% + yaw 左满 + IMU正常 + 遥控已连接 */
         if (!g.armed &&
             rc_new.throttle < 0.05f &&
-            rc_new.yaw < -0.9f) {
-            printf("[APP] arming...\r\n");
-            motor_arm();
-            quad_mixer_arm(&g.mixer);
-            attitude_init(&g.att_ctrl);
-            attitude_enable(&g.att_ctrl, true);
-            g.armed = true;
+            rc_new.yaw < -0.9f &&
+            g.imu_ok &&
+            remote_is_connected()) {
+            battery_status_t bat = battery_get_status();
+            if (bat == BATTERY_CRITICAL) {
+                printf("[APP] cannot arm: battery critical\r\n");
+            } else {
+                printf("[APP] arming...\r\n");
+                motor_arm();
+                quad_mixer_arm(&g.mixer);
+                attitude_init(&g.att_ctrl);
+                attitude_enable(&g.att_ctrl, true);
+                g.armed = true;
+            }
         }
 
         /* 上锁: 油门<5% + yaw 右满 */
@@ -220,12 +270,29 @@ static void telem_task(void *arg)
     while (g.running) {
         vTaskDelay(pdMS_TO_TICKS(100));
 
-        printf("[T] %s%s | R:%.1f P:%.1f Y:%.1f | thr:%.2f rc:%d\r\n",
+        /* LED + 电池更新 (10Hz) */
+        led_tick();
+        battery_update();
+
+        /* LED 状态切换 */
+        if (g.emergency) {
+            /* 保持 LED_BLINK_DOUBLE, 由 check_safety 设置 */
+        } else if (g.flying) {
+            led_set_state(LED_BLINK_FAST);
+        } else if (g.armed) {
+            led_set_state(LED_ON);
+        } else {
+            led_set_state(LED_BLINK_SLOW);
+        }
+
+        printf("[T] %s%s%s | R:%.1f P:%.1f Y:%.1f | thr:%.2f rc:%d | bat:%.1fV\r\n",
                g.armed ? "ARM" : "DIS",
                g.flying ? "+FLY" : "",
+               g.emergency ? "+EMG" : "",
                g.attitude.roll, g.attitude.pitch, g.attitude.yaw,
                g.rc.throttle,
-               remote_is_connected());
+               remote_is_connected(),
+               battery_get_voltage());
     }
 
     vTaskDelete(NULL);
@@ -242,9 +309,19 @@ int app_init(void)
     usart_printf_init();
     printf("\r\n=== PACER v3.0 (STM32H743) ===\r\n");
 
+    /* LED */
+    led_init();
+    led_set_state(LED_BREATH);  /* 校准中 */
+
+    /* 看门狗 */
+    watchdog_init(CFG_WATCHDOG_TIMEOUT_MS);
+
     /* Timer PWM (电机) */
     hal_tim_pwm_init();
     motor_init();
+
+    /* 电池 ADC */
+    battery_init();
 
     /* IMU */
     imu_icm20948_register();
@@ -292,6 +369,7 @@ int app_init(void)
     g.emergency = false;
 
     printf("[APP] init OK, ready to arm (throttle 0 + yaw left)\r\n");
+    led_set_state(LED_BLINK_SLOW);  /* idle */
     return 0;
 }
 
@@ -302,6 +380,7 @@ void app_deinit(void)
     motor_disarm();
     imu_deinit();
     remote_deinit();
+    led_set_state(LED_OFF);
     printf("[APP] shutdown\r\n");
 }
 
