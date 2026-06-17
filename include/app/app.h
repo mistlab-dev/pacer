@@ -1,26 +1,33 @@
 /**
  * @file app.h
- * @brief 应用层 — 四旋翼无人机系统初始化、主循环、模式管理
+ * @brief 四旋翼主应用接口 — FreeRTOS 多任务
+ *
+ * app_init() → 硬件/传感器/控制初始化
+ * app_run()  → 创建任务 + 启动调度器 (不返回)
  */
 
 #ifndef PACER_APP_H
 #define PACER_APP_H
 
-/**
- * @brief 运行模式
- */
-typedef enum {
-    APP_MODE_RUN,        /* 正常飞行 */
-    APP_MODE_CALIBRATE,  /* 校准 IMU */
-    APP_MODE_DEBUG,      /* 打印姿态数据 (不驱动电机) */
-    APP_MODE_ESC_CAL,    /* 校准 ESC */
-} app_mode_t;
+#include "filter/filter.h"
+#include "sensor/imu.h"
 
 /**
- * @brief 应用入口
- * @param mode 运行模式
- * @return 退出码
+ * @brief 初始化所有子系统
+ * @return 0=成功, -1=失败
  */
-int app_run(app_mode_t mode);
+int  app_init(void);
+void app_deinit(void);
+
+/**
+ * @brief 启动 FreeRTOS 任务 + 调度器
+ * @return 正常不返回, -1=失败
+ */
+int  app_run(void);
+
+/* 调试接口 */
+const attitude_t   *app_get_attitude(void);
+const imu_sample_t *app_get_imu(void);
+bool app_is_emergency(void);
 
 #endif /* PACER_APP_H */

@@ -1,17 +1,11 @@
 /**
  * @file remote.h
- * @brief 遥控输入统一接口 — 四旋翼
+ * @brief 遥控接口 — UART 串口
  *
- * 抽象遥控输入源，上层只调 remote_poll() 获取四通道输入。
- * 支持多种输入源:
- *   - 键盘 (stdin, 调试用)
- *   - UDP (手机APP/手柄通过网络)
+ * STM32H743 版本，替代 RPi 的 UDP/键盘遥控。
  *
- * 通道映射:
- *   throttle  0~1    油门
- *   roll     -1~+1   横滚
- *   pitch    -1~+1   俯仰
- *   yaw      -1~+1   偏航
+ * 使用 USART3 (PD8 TX / PD9 RX), 115200 baud。
+ * 协议见 remote.c 注释。
  */
 
 #ifndef PACER_REMOTE_H
@@ -19,50 +13,34 @@
 
 #include <stdbool.h>
 
-/* 遥控输入源 */
-typedef enum {
-    REMOTE_SRC_KEYBOARD,   /* 标准输入 (调试) */
-    REMOTE_SRC_UDP,        /* UDP 网络遥控 */
-} remote_src_t;
-
 /* 遥控命令 */
 typedef struct {
-    float throttle;     /* 0.0 ~ 1.0 油门 */
-    float roll;         /* -1.0 ~ +1.0 */
-    float pitch;        /* -1.0 ~ +1.0 */
-    float yaw;          /* -1.0 ~ +1.0 */
-    bool  arm_switch;   /* 解锁开关 */
-    bool  estop;        /* 紧急停止 */
-    bool  connected;    /* 是否有遥控连接 */
+    float throttle;   /* 0.0~1.0 */
+    float roll;       /* -1.0~+1.0 */
+    float pitch;      /* -1.0~+1.0 */
+    float yaw;        /* -1.0~+1.0 */
+    bool  valid;      /* 数据是否有效 */
 } remote_cmd_t;
 
-/* 遥控配置 */
-typedef struct {
-    remote_src_t source;
-    /* UDP 配置 */
-    int  udp_port;          /* 监听端口, 默认 8888 */
-    float timeout_sec;      /* 无数据超时 (秒), 超时后自动归零 */
-} remote_config_t;
-
-#define REMOTE_CONFIG_DEFAULT { \
-    .source = REMOTE_SRC_KEYBOARD, \
-    .udp_port = 8888, \
-    .timeout_sec = 0.5f, \
-}
-
 /**
- * @brief 初始化遥控模块
+ * @brief 初始化遥控接收
  */
-int  remote_init(const remote_config_t *cfg);
-
-/**
- * @brief 轮询遥控输入 (非阻塞)
- */
-void remote_poll(remote_cmd_t *cmd);
-
-/**
- * @brief 关闭遥控模块
- */
+void remote_init(void);
 void remote_deinit(void);
+
+/**
+ * @brief 读取最新遥控命令
+ * @return 0=有新数据, -1=无新数据
+ */
+int  remote_poll(remote_cmd_t *out);
+
+/**
+ * @brief 遥控是否连接 (超时检测)
+ */
+bool remote_is_connected(void);
+void remote_disconnect(void);
+
+/* UART 中断回调 (由 stm32xx_it.c 中的 USART3_IRQHandler 调用) */
+void remote_uart_rx_callback(uint8_t b);
 
 #endif /* PACER_REMOTE_H */

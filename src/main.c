@@ -1,86 +1,146 @@
 /**
  * @file main.c
- * @brief 入口 — 解析参数, 调用 app_run 或 imu_debug_run
+ * @brief PACER 四旋翼飞控入口 — STM32H743
+ *
+ * 硬件:
+ *   MCU:     STM32H743VI @ 480MHz
+ *   IMU:     ICM20948 (I2C1, PB6/PB7)
+ *   ESC PWM: TIM1 CH1~4 (PA8, PE11, PE13, PE14)
+ *   遥控:    USART3 (PD8/PD9)
+ *   调试:    USART2 (PA2/PA3)
+ *
+ * 启动流程:
+ *   1. HAL_Init() — systick, NVIC
+ *   2. SystemClock_Config() — 480MHz
+ *   3. app_init() — 外设 + 传感器 + 控制器
+ *   4. app_run()  — FreeRTOS 调度器 (不返回)
  */
 
+#include "stm32h7xx_hal.h"
 #include "app/app.h"
-#include "app/imu_debug.h"
+#include "usart_printf.h"
 #include <stdio.h>
-#include <string.h>
 
-static void usage(const char *prog)
+/* ================ 系统时钟 480MHz ================ */
+
+void SystemClock_Config(void)
 {
-    printf("Pacer v3.0 — 四旋翼无人机 (RPi Zero 2W + ICM20948)\n\n");
-    printf("用法: sudo %s [选项] [参数]\n\n", prog);
-    printf("飞行模式:\n");
-    printf("  (无参数)        启动飞控\n");
-    printf("  --calibrate     校准 IMU 陀螺仪零偏 (简易)\n");
-    printf("  --esc-cal       校准 ESC 油门行程\n");
-    printf("  --debug         调试模式 (打印姿态, 不驱动电机)\n\n");
-    printf("IMU 调试工具:\n");
-    printf("  --imu-stream          实时数据流 (6轴 + 姿态角)\n");
-    printf("  --imu-calibrate       完整校准向导 (陀螺+加速度+磁力计)\n");
-    printf("  --imu-diagnose        自检诊断 (7项检查)\n");
-    printf("  --imu-spectrum        频谱分析 (FFT, 找共振点)\n");
-    printf("  --imu-record [file]   CSV 数据记录 (默认 imu_log.csv)\n");
-    printf("  --imu-replay  <file>  CSV 回放 (Madgwick vs 互补滤波对比)\n");
-    printf("  --imu-noise           静态噪声分析 (RMS + 噪声密度)\n\n");
-    printf("  -h, --help            显示帮助\n");
+    RCC_OscInitTypeDef osc = {0};
+    RCC_ClkInitTypeDef clk = {0};
+
+    /* LSI — 看门狗用 */
+    osc.OscillatorType = RCC_OSCILLATORTYPE_HSI | RCC_OSCILLATORTYPE_LSI;
+    osc.HSIState       = RCC_HSI_ON;
+    osc.LSIState       = RCC_LSI_ON;
+    osc.PLL.PLLState   = RCC_PLL_ON;
+    osc.PLL.PLLSource  = RCC_PLLSOURCE_HSI;
+    osc.PLL.PLLM       = 4;   /* HSI=64MHz / 4 = 16MHz */
+    osc.PLL.PLLN       = 120; /* 16MHz * 120 = 1920MHz VCO */
+    osc.PLL.PLLP       = 2;   /* 1920 / 2 = 960MHz SYS */
+    osc.PLL.PLLQ       = 15;  /* USB 48MHz */
+    osc.PLL.PLLR       = 2;
+
+    if (HAL_RCC_OscConfig(&osc) != HAL_OK) {
+        while (1) { /* 死循环 */ }
+    }
+
+    /* CPU 480MHz, AXI 240MHz, APB1 120MHz, APB2 240MHz */
+    clk.ClockType = RCC_CLOCKTYPE_HCLK  |
+                    RCC_CLOCKTYPE_SYSCLK |
+                    RCC_CLOCKTYPE_PCLK1  |
+                    RCC_CLOCKTYPE_PCLK2  |
+                    RCC_CLOCKTYPE_D3PCLK1 |
+                    RCC_CLOCKTYPE_D1PCLK1;
+    clk.SYSCLKSource   = RCC_SYSCLKSOURCE_PLLCLK;
+    clk.SYSCLKDivider  = RCC_SYSCLK_DIV1;     /* 480MHz */
+    clk.AHBCLKDivider  = RCC_HCLK_DIV2;       /* 240MHz AXI */
+    clk.APB1CLKDivider = RCC_APB1_DIV2;       /* 120MHz */
+    clk.APB2CLKDivider = RCC_APB2_DIV2;       /* 240MHz */
+    clk.APB3CLKDivider = RCC_APB3_DIV2;       /* 120MHz */
+    clk.APB4CLKDivider = RCC_APB4_DIV2;       /* 120MHz */
+
+    if (HAL_RCC_ClockConfig(&clk, FLASH_LATENCY_4) != HAL_OK) {
+        while (1) { }
+    }
 }
 
-int main(int argc, char *argv[])
+/* ================ I2C1 MSP 初始化 ================ */
+
+void HAL_I2C_MspInit(I2C_HandleTypeDef *hi2c)
 {
-    /* IMU 调试子命令 */
-    for (int i = 1; i < argc; i++) {
-        if (strcmp(argv[i], "--imu-stream") == 0) {
-            return imu_debug_run(IMU_DBG_STREAM, NULL);
-        }
-        if (strcmp(argv[i], "--imu-calibrate") == 0) {
-            return imu_debug_run(IMU_DBG_CALIBRATE, NULL);
-        }
-        if (strcmp(argv[i], "--imu-diagnose") == 0) {
-            return imu_debug_run(IMU_DBG_DIAGNOSE, NULL);
-        }
-        if (strcmp(argv[i], "--imu-spectrum") == 0) {
-            return imu_debug_run(IMU_DBG_SPECTRUM, NULL);
-        }
-        if (strcmp(argv[i], "--imu-record") == 0) {
-            const char *file = (i + 1 < argc && argv[i+1][0] != '-') ? argv[i+1] : NULL;
-            return imu_debug_run(IMU_DBG_RECORD, file);
-        }
-        if (strcmp(argv[i], "--imu-replay") == 0 || strcmp(argv[i], "--imu-compare") == 0) {
-            const char *file = (i + 1 < argc) ? argv[i+1] : NULL;
-            return imu_debug_run(IMU_DBG_REPLAY, file);
-        }
-        if (strcmp(argv[i], "--imu-noise") == 0) {
-            return imu_debug_run(IMU_DBG_NOISE, NULL);
-        }
+    if (hi2c->Instance == I2C1) {
+        __HAL_RCC_I2C1_CLK_ENABLE();
+        __HAL_RCC_GPIOB_CLK_ENABLE();
+
+        GPIO_InitTypeDef g = {0};
+        g.Pin       = GPIO_PIN_6 | GPIO_PIN_7;  /* PB6=SCL, PB7=SDA */
+        g.Mode      = GPIO_MODE_AF_OD;
+        g.Pull      = GPIO_PULLUP;
+        g.Speed     = GPIO_SPEED_FREQ_HIGH;
+        g.Alternate = GPIO_AF4_I2C1;
+        HAL_GPIO_Init(GPIOB, &g);
+    }
+}
+
+/* ================ USART3 RX 完成回调 ================ */
+
+void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
+{
+    if (huart->Instance == USART3) {
+        extern UART_HandleTypeDef huart3;
+        extern void remote_uart_rx_callback(uint8_t b);
+        remote_uart_rx_callback(huart3.pRxBuffPtr[0]);
+        HAL_UART_Receive_IT(&huart3, huart3.pRxBuffPtr, 1);
+    }
+}
+
+/* ================ main ================ */
+
+int main(void)
+{
+    /* 1. HAL 初始化 */
+    HAL_Init();
+    SystemClock_Config();
+
+    /* 2. 应用初始化 */
+    if (app_init() != 0) {
+        printf("[MAIN] init failed!\r\n");
+        while (1) { HAL_Delay(1000); }
     }
 
-    /* 飞行模式 */
-    app_mode_t mode = APP_MODE_RUN;
+    /* 3. 启动 FreeRTOS (不返回) */
+    app_run();
 
-    for (int i = 1; i < argc; i++) {
-        if (strcmp(argv[i], "--calibrate") == 0) {
-            mode = APP_MODE_CALIBRATE;
-        } else if (strcmp(argv[i], "--esc-cal") == 0) {
-            mode = APP_MODE_ESC_CAL;
-        } else if (strcmp(argv[i], "--debug") == 0) {
-            mode = APP_MODE_DEBUG;
-        } else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
-            usage(argv[0]);
-            return 0;
-        } else if (argv[i][0] == '-' && argv[i][1] != '\0') {
-            /* 跳过 --imu-record 的文件参数等 */
-            if (strncmp(argv[i], "--imu", 5) == 0) {
-                /* 已在上面处理, 跳过 */
-                continue;
-            }
-            fprintf(stderr, "未知参数: %s\n", argv[i]);
-            usage(argv[0]);
-            return 1;
-        }
-    }
+    /* 不应该到这里 */
+    while (1) { }
+}
 
-    return app_run(mode);
+/* ================ FreeRTOS 钩子函数 ================ */
+
+void vApplicationStackOverflowHook(TaskHandle_t xTask, char *pcTaskName)
+{
+    printf("[FATAL] stack overflow in %s\r\n", pcTaskName);
+    while (1) { }
+}
+
+void vApplicationMallocFailedHook(void)
+{
+    printf("[FATAL] malloc failed\r\n");
+    while (1) { }
+}
+
+/* ================ HardFault Handler ================ */
+
+void HardFault_Handler(void)
+{
+    printf("[FATAL] HardFault!\r\n");
+    while (1) { }
+}
+
+/* ================ STM32 HAL 错误回调 ================ */
+
+void Error_Handler(void)
+{
+    printf("[FATAL] HAL Error\r\n");
+    while (1) { }
 }

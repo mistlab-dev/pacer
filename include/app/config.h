@@ -1,6 +1,6 @@
 /**
  * @file config.h
- * @brief 全局运行时配置 — 四旋翼无人机
+ * @brief 全局运行时配置 — 四旋翼无人机 (STM32H743)
  *
  * 编译时常量。运行时参数通过接口函数修改，方便在线调参。
  */
@@ -8,59 +8,57 @@
 #ifndef PACER_CONFIG_H
 #define PACER_CONFIG_H
 
+/* ==================== 目标平台 ==================== */
+
+#define TARGET_STM32H743        1
+#define TARGET_MCU              "STM32H743"
+#define SYS_CLOCK_HZ            480000000U   /* H743 480MHz */
+
 /* ==================== IMU ==================== */
 
-#define CFG_IMU_I2C_BUS           1       /* 树莓派 I2C-1 */
 #define CFG_IMU_I2C_ADDR          0x68    /* ICM20948 AD0=0 */
-/* IMU 采样率: Zero 2W 400Hz, Zero 200Hz */
-#if defined(TARGET_RPI_ZERO2W)
 #define CFG_IMU_SAMPLE_HZ         400
-#elif defined(TARGET_RPI_ZERO)
-#define CFG_IMU_SAMPLE_HZ         200
-#else
-#define CFG_IMU_SAMPLE_HZ         400
-#endif
 #define CFG_IMU_ACCEL_RANGE_G     8       /* ±8g */
 #define CFG_IMU_GYRO_RANGE_DPS    1000    /* ±1000°/s */
 
 /* ==================== 控制频率 ==================== */
 
-/* Zero 2W (四核): 400Hz, Zero (单核): 200Hz */
-#if defined(TARGET_RPI_ZERO2W)
 #define CFG_CONTROL_HZ            400
-#elif defined(TARGET_RPI_ZERO)
-#define CFG_CONTROL_HZ            200
-#else
-#define CFG_CONTROL_HZ            400     /* 默认 400Hz */
-#endif
-
 #define CFG_CONTROL_DT            (1.0f / CFG_CONTROL_HZ)
 #define CFG_CONTROL_INTERVAL_US   (1000000 / CFG_CONTROL_HZ)
 
-/* ==================== 电机 ==================== */
+/* ==================== 电机 PWM (硬件 Timer) ==================== */
 
-/* 电机 PWM 频率 (DC 模式用, ESC 模式用 PCA9685 频率) */
-#define CFG_MOTOR_PWM_HZ          20000
-/* PCA9685 */
-#define CFG_PCA9685_I2C_BUS       1
-#define CFG_PCA9685_I2C_ADDR      0x40
-/* PCA9685 PWM: Zero 2W 400Hz, Zero 200Hz */
-#if defined(TARGET_RPI_ZERO2W)
-#define CFG_PCA9685_PWM_HZ        400
-#elif defined(TARGET_RPI_ZERO)
-#define CFG_PCA9685_PWM_HZ        200
-#else
-#define CFG_PCA9685_PWM_HZ        400
-#endif
+/*
+ * H743 Timer PWM 配置:
+ *   ESC 输出 50Hz, 1000~2000μs 脉宽
+ *   Timer 时钟 = 240MHz (APB2 / 2)
+ *   预分频 = 240-1 → 计数频率 1MHz (1μs/tick)
+ *   自动重载 = 20000-1 → 周期 20ms = 50Hz
+ *
+ *   脉宽映射: 1000~2000 ticks = 1000~2000μs
+ */
+#define CFG_ESC_PWM_FREQ_HZ       50
+#define CFG_ESC_PWM_PRESCALER     239     /* 240MHz / 240 = 1MHz */
+#define CFG_ESC_PWM_PERIOD        20000   /* 20ms = 50Hz */
+#define CFG_ESC_PULSE_MIN         1000    /* 1ms = 最低油门/停止 */
+#define CFG_ESC_PULSE_MAX         2000    /* 2ms = 最大油门 */
+#define CFG_ESC_PULSE_ARM         1000    /* 解锁脉冲 */
+#define CFG_ESC_PULSE_NEUTRAL     1500    /* 中位 */
 
-/* ESC 四旋翼通道 */
-#define CFG_ESC_FL_CH              0      /* 前左 — 顺时针 (CW) */
-#define CFG_ESC_FR_CH              1      /* 前右 — 逆时针 (CCW) */
-#define CFG_ESC_RL_CH              2      /* 后左 — 逆时针 (CCW) */
-#define CFG_ESC_RR_CH              3      /* 后右 — 顺时针 (CW) */
-
-/* PWM 参数 */
-#define CFG_MOTOR_PWM_RANGE        1000
+/*
+ * Timer / 通道分配:
+ *   TIM1: CH1=FL(PA8),  CH2=FR(PE11), CH3=RL(PE13), CH4=RR(PE14)
+ *   (H743 高级定时器, 互补输出可配, 这里用主通道)
+ */
+#define CFG_ESC_FL_TIMER          TIM1
+#define CFG_ESC_FL_CHANNEL        TIM_CHANNEL_1
+#define CFG_ESC_FR_TIMER          TIM1
+#define CFG_ESC_FR_CHANNEL        TIM_CHANNEL_2
+#define CFG_ESC_RL_TIMER          TIM1
+#define CFG_ESC_RL_CHANNEL        TIM_CHANNEL_3
+#define CFG_ESC_RR_TIMER          TIM1
+#define CFG_ESC_RR_CHANNEL        TIM_CHANNEL_4
 
 /* ==================== 姿态控制 PID ==================== */
 
@@ -100,17 +98,26 @@
 #define CFG_MIXER_THROTTLE_MAX     1.0f
 #define CFG_MIXER_HOVER            0.50f  /* 悬停油门估计 */
 
-/* ==================== 遥控 ==================== */
+/* ==================== 遥控 (UART) ==================== */
 
-/* 0=键盘 (调试用), 1=UDP (正常飞行) */
-#define CFG_REMOTE_SRC             0
-#define CFG_REMOTE_UDP_PORT        8888
+/*
+ * UART3 (PD8/PD9 ≈ USART3) 用于遥控
+ * 协议: 16 字节帧, 与之前 UDP 兼容
+ *   [0..3]  throttle (float, 0~1, 小端)
+ *   [4..7]  roll     (float, -1~+1, 小端)
+ *   [8..11] pitch    (float, -1~+1, 小端)
+ *   [12..15] yaw     (float, -1~+1, 小端)
+ *   帧头: 0xAA 0x55 (2 字节同步)
+ *   总帧长: 18 字节
+ */
+#define CFG_REMOTE_UART            USART3
+#define CFG_REMOTE_UART_BAUD       115200
 #define CFG_REMOTE_TIMEOUT_SEC     0.5f
 
 /* ==================== 功能开关 ==================== */
 
 #define CFG_USE_MADGWICK           1      /* 1=Madgwick, 0=互补滤波 */
-#define CFG_ENABLE_CONSOLE_LOG     1      /* 控制台打印调试 */
+#define CFG_ENABLE_CONSOLE_LOG     1      /* UART 调试打印 */
 
 /* ==================== 飞行阶段 ==================== */
 
@@ -126,5 +133,14 @@
 
 #define CFG_ARM_STICK_TIMEOUT_SEC  3.0f   /* 摇杆解锁窗口 */
 #define CFG_NO_SIGNAL_TIMEOUT_SEC  0.5f   /* 无信号超时自动降落 */
+
+/* ==================== FreeRTOS ==================== */
+
+#define CFG_TASK_CTRL_STACK        1024    /* 控制任务栈 (字) */
+#define CFG_TASK_CTRL_PRIORITY     5       /* 控制任务优先级 (高) */
+#define CFG_TASK_TELEM_STACK       512     /* 遥测任务栈 */
+#define CFG_TASK_TELEM_PRIORITY    2       /* 遥测任务优先级 (低) */
+#define CFG_TASK_RX_STACK          512     /* 遥控接收任务栈 */
+#define CFG_TASK_RX_PRIORITY       4       /* 遥控接收任务优先级 */
 
 #endif /* PACER_CONFIG_H */

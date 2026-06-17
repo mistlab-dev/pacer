@@ -1,75 +1,57 @@
 /**
  * @file motor.h
- * @brief 电机驱动统一接口
+ * @brief 电机驱动接口 — ESC (硬件 Timer PWM)
  *
- * 支持三种驱动方式:
- *   1. GPIO PWM — 有刷电机, IN1/IN2 双通道
- *   2. PCA9685 PWM — 有刷电机, IN1/IN2 双通道
- *   3. PCA9685 ESC — 无刷电调, 单通道舵机信号 (1000~2000μs, 50Hz)
+ * STM32H743 版本，专为四旋翼设计。
  *
- * 上层只需调 motor_set()，不关心底层。
+ * motor_set(channel, power):
+ *   power: 0.0 = 最低/停止, 1.0 = 最大油门
+ *   对应 ESC 脉宽 1000~2000μs
  */
 
 #ifndef PACER_MOTOR_H
 #define PACER_MOTOR_H
 
 #include <stdbool.h>
-#include <stdint.h>
 
-/* 电机类型 */
-typedef enum {
-    MOTOR_TYPE_DC_GPIO,    /* 有刷电机, GPIO PWM */
-    MOTOR_TYPE_DC_PCA9685, /* 有刷电机, PCA9685 PWM (双通道) */
-    MOTOR_TYPE_ESC,        /* 无刷电调, PCA9685 舵机信号 (单通道) */
-} motor_type_t;
-
-/* 单个电机 */
-typedef struct {
-    motor_type_t type;     /* 电机类型 */
-    int pin_a;             /* 正转通道 / ESC 信号通道 */
-    int pin_b;             /* 反转通道 (ESC 模式不用, 填 -1) */
-    int pwm_range;         /* PWM 分辨率 (DC: 1000, ESC: 1000) */
-    bool inverted;         /* 是否反转方向 */
-    bool armed;            /* ESC 是否已解锁 */
-    bool ready;
-} motor_t;
+/* ESC 通道 (与 hal_tim 对应) */
+enum {
+    MOTOR_FL = 0,   /* 前左  CW  */
+    MOTOR_FR = 1,   /* 前右  CCW */
+    MOTOR_RL = 2,   /* 后左  CCW */
+    MOTOR_RR = 3,   /* 后右  CW  */
+    MOTOR_COUNT,
+};
 
 /**
- * @brief 初始化有刷电机 (DC)
+ * @brief 初始化电机子系统
+ * @return 0=成功
  */
-int  motor_init_dc(motor_t *m, motor_type_t type,
-                   int pin_a, int pin_b, int pwm_range, bool inverted);
+int  motor_init(void);
+void motor_deinit(void);
 
 /**
- * @brief 初始化无刷电调 (ESC)
- * @param m         电机
- * @param signal_ch PCA9685 信号通道号
- * @param inverted  是否反转
+ * @brief 设置单通道油门
+ * @param channel MOTOR_FL / FR / RL / RR
+ * @param power   0.0~1.0
  */
-int  motor_init_esc(motor_t *m, int signal_ch, bool inverted);
+void motor_set(int channel, float power);
 
 /**
- * @brief 设置电机输出
- * @param m     电机
- * @param power -1.0 ~ +1.0 (ESC: -1=反转最大, 0=停止, +1=正转最大)
- *               DC: -pwm_range ~ +pwm_range
+ * @brief 设置所有通道相同油门
  */
-void motor_set(motor_t *m, float power);
+void motor_set_all(float power);
 
 /**
- * @brief 刹车
+ * @brief 全部停止 (输出最低脉宽)
  */
-void motor_brake(motor_t *m);
+void motor_stop_all(void);
 
 /**
- * @brief ESC 解锁 (发送中位信号)
- * @note  某些电调需要先收到 1500μs 才能工作
+ * @brief ESC 解锁 — 输出最低油门信号
  */
-void motor_esc_arm(motor_t *m);
-
-/**
- * @brief 关闭电机
- */
-void motor_deinit(motor_t *m);
+int  motor_arm(void);
+void motor_disarm(void);
+bool motor_is_armed(void);
 
 #endif /* PACER_MOTOR_H */
