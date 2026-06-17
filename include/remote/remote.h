@@ -12,6 +12,7 @@
 #define PACER_REMOTE_H
 
 #include <stdbool.h>
+#include <stdint.h>
 
 /* 遥控命令 */
 typedef struct {

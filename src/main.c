@@ -19,6 +19,8 @@
 #include "stm32h7xx_hal.h"
 #include "app/app.h"
 #include "usart_printf.h"
+#include "FreeRTOS.h"
+#include "task.h"
 #include <stdio.h>
 
 /* ================ 系统时钟 480MHz ================ */

@@ -5,6 +5,9 @@
 
 #include "stm32h7xx_hal.h"
 #include "FreeRTOS.h"
+#include "task.h"
+
+extern void xPortSysTickHandler(void);
 
 extern UART_HandleTypeDef huart3;
 extern void HAL_UART_RxCpltCallback(UART_HandleTypeDef *);
@@ -18,12 +21,10 @@ void USART3_IRQHandler(void)
 /* FreeRTOS SysTick */
 void SysTick_Handler(void)
 {
-    /* FreeRTOS 在 port.c 中处理 */
+    HAL_IncTick();
+    if (xTaskGetSchedulerState() != taskSCHEDULER_NOT_STARTED) {
+        xPortSysTickHandler();
+    }
 }
 
-/* HardFault */
-void HardFault_Handler(void)   { while (1) {} }
-void MemManage_Handler(void)   { while (1) {} }
-void BusFault_Handler(void)    { while (1) {} }
-void UsageFault_Handler(void)  { while (1) {} }
-void NMI_Handler(void)         { while (1) {} }
+/* HardFault 等异常处理见 src/main.c */

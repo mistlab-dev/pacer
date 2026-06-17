@@ -4,27 +4,45 @@ REM STM32H743VI + FreeRTOS
 
 setlocal EnableDelayedExpansion
 
-REM ===== 工具链路径 =====
-REM 请根据实际安装路径修改
-set ARM_TOOLCHAIN=C:\Program Files (x86)\GNU Tools Arm Embedded\9 2019-q4-major\bin
+REM ===== 工具链路径 (按实际安装修改) =====
+set "ARM_TOOLCHAIN=C:\Program Files (x86)\Arm GNU Toolchain arm-none-eabi\14.2 rel1\bin"
 if not exist "%ARM_TOOLCHAIN%\arm-none-eabi-gcc.exe" (
-    echo [ERROR] ARM toolchain not found at: %ARM_TOOLCHAIN%
-    echo Please install GNU Arm Embedded Toolchain from:
-    echo https://developer.arm.com/tools-and-software/open-source-software/developer-tools/gnu-toolchain/gnu-arm
-    echo Or modify ARM_TOOLCHAIN path in this script.
+    set "ARM_TOOLCHAIN=C:\Program Files (x86)\GNU Tools Arm Embedded\9 2019-q4-major\bin"
+)
+if not exist "%ARM_TOOLCHAIN%\arm-none-eabi-gcc.exe" (
+    echo [ERROR] ARM toolchain not found.
+    echo Install: winget install Arm.GnuArmEmbeddedToolchain
     exit /b 1
 )
 
 REM ===== CMake =====
-set CMAKE_PATH=C:\Program Files\CMake\bin
+set "CMAKE_PATH=C:\Program Files\CMake\bin"
 if not exist "%CMAKE_PATH%\cmake.exe" (
-    echo [ERROR] CMake not found at: %CMAKE_PATH%
-    echo Please install CMake from: https://cmake.org/download/
+    where cmake >nul 2>&1
+    if errorlevel 1 (
+        echo [ERROR] CMake not found. Install from https://cmake.org/download/
+        exit /b 1
+    )
+    set CMAKE_PATH=
+)
+
+REM ===== MinGW make (WinLibs) =====
+set "MINGW_BIN="
+where mingw32-make >nul 2>&1
+if not errorlevel 1 (
+    for /f "delims=" %%i in ('where mingw32-make') do set "MINGW_BIN=%%~dpi"
+) else if exist "%LOCALAPPDATA%\Microsoft\WinGet\Packages\BrechtSanders.WinLibs.POSIX.UCRT_Microsoft.Winget.Source_8wekyb3d8bbwe\mingw64\bin\mingw32-make.exe" (
+    set "MINGW_BIN=%LOCALAPPDATA%\Microsoft\WinGet\Packages\BrechtSanders.WinLibs.POSIX.UCRT_Microsoft.Winget.Source_8wekyb3d8bbwe\mingw64\bin"
+)
+if "%MINGW_BIN%"=="" (
+    echo [ERROR] mingw32-make not found.
+    echo Install: winget install BrechtSanders.WinLibs.POSIX.UCRT
     exit /b 1
 )
 
 REM ===== 设置 PATH =====
-set PATH=%ARM_TOOLCHAIN%;%CMAKE_PATH%;%PATH%
+if not "%CMAKE_PATH%"=="" set PATH=%CMAKE_PATH%;%PATH%
+set PATH=%ARM_TOOLCHAIN%;%MINGW_BIN%;%PATH%
 
 REM ===== 项目路径 =====
 set PROJECT_ROOT=%~dp0..
@@ -41,6 +59,13 @@ echo ===== PACER Build Script =====
 echo Target: %TARGET%
 echo Project: %PROJECT_ROOT%
 
+REM ===== 检查依赖 =====
+if not exist "%PROJECT_ROOT%\stm32hal\hal\Src\stm32h7xx_hal_i2c.c" (
+    echo [ERROR] HAL library missing. Run:
+    echo   powershell -ExecutionPolicy Bypass -File scripts\download_deps.ps1
+    exit /b 1
+)
+
 REM ===== 清理 =====
 if %CLEAN_BUILD%==1 (
     echo Cleaning build directory...
@@ -53,10 +78,17 @@ if not exist "%BUILD_DIR%" mkdir "%BUILD_DIR%"
 REM ===== CMake 配置 =====
 echo Configuring with CMake...
 cd /d "%BUILD_DIR%"
-"%CMAKE_PATH%\cmake.exe" -G "MinGW Makefiles" ^
-    -DCMAKE_BUILD_TYPE=%TARGET% ^
-    -DCMAKE_TOOLCHAIN_FILE="%PROJECT_ROOT%\cmake\arm-toolchain.cmake" ^
-    "%PROJECT_ROOT%"
+if "%CMAKE_PATH%"=="" (
+    cmake -G "MinGW Makefiles" ^
+        -DCMAKE_BUILD_TYPE=%TARGET% ^
+        -DCMAKE_TOOLCHAIN_FILE="%PROJECT_ROOT%\cmake\arm-toolchain.cmake" ^
+        "%PROJECT_ROOT%"
+) else (
+    "%CMAKE_PATH%\cmake.exe" -G "MinGW Makefiles" ^
+        -DCMAKE_BUILD_TYPE=%TARGET% ^
+        -DCMAKE_TOOLCHAIN_FILE="%PROJECT_ROOT%\cmake\arm-toolchain.cmake" ^
+        "%PROJECT_ROOT%"
+)
 
 if errorlevel 1 (
     echo [ERROR] CMake configuration failed
@@ -65,7 +97,11 @@ if errorlevel 1 (
 
 REM ===== 编译 =====
 echo Building...
-"%CMAKE_PATH%\cmake.exe" --build . --config %TARGET%
+if "%CMAKE_PATH%"=="" (
+    cmake --build . --config %TARGET%
+) else (
+    "%CMAKE_PATH%\cmake.exe" --build . --config %TARGET%
+)
 
 if errorlevel 1 (
     echo [ERROR] Build failed
@@ -77,7 +113,6 @@ echo Output: %BUILD_DIR%\pacer.elf
 echo Binary: %BUILD_DIR%\pacer.bin
 echo.
 
-REM ===== 显示大小 =====
 "%ARM_TOOLCHAIN%\arm-none-eabi-size.exe" "%BUILD_DIR%\pacer.elf"
 
 cd /d "%PROJECT_ROOT%"

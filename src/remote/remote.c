@@ -18,6 +18,8 @@
 #include "remote/remote.h"
 #include "app/config.h"
 #include "stm32h7xx_hal.h"
+#include "FreeRTOS.h"
+#include "task.h"
 #include <string.h>
 
 #if CFG_ENABLE_CONSOLE_LOG

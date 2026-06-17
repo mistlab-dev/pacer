@@ -27,7 +27,7 @@
 #define configTASK_NOTIFICATION_ARRAY_ENTRIES   3
 
 /* ============ 内存配置 ============ */
-#define configSUPPORT_STATIC_ALLOCATION         1
+#define configSUPPORT_STATIC_ALLOCATION         0
 #define configSUPPORT_DYNAMIC_ALLOCATION        1
 #define configTOTAL_HEAP_SIZE                   81920   /* bytes, 约 80KB */
 #define configAPPLICATION_ALLOCATED_HEAP        0
@@ -69,12 +69,6 @@
 /* ============ 断言宏 ============ */
 #include "stm32h743xx.h"
 #define configASSERT(x) if((x) == 0) { taskDISABLE_INTERRUPTS(); for(;;); }
-
-/* ============ Hook 函数声明 ============ */
-extern void vApplicationStackOverflowHook(TaskHandle_t xTask, char *pcTaskName);
-extern void vApplicationMallocFailedHook(void);
-extern void vApplicationGetIdleTaskMemory(StaticTask_t **ppxIdleTaskTCBBuffer, StackType_t **ppxIdleTaskStackBuffer, uint32_t *pulIdleTaskStackSize);
-extern void vApplicationGetTimerTaskMemory(StaticTask_t **ppxTimerTaskTCBBuffer, StackType_t **ppxTimerTaskStackBuffer, uint32_t *pulTimerTaskStackSize);
 
 /* ============ 包含 API 函数 ============ */
 #define INCLUDE_vTaskPrioritySet                1

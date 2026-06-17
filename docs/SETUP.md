@@ -62,7 +62,7 @@
 
 ### 1.4 STM32CubeProgrammer（烧录工具）
 
-1. 打开 https://www.st.com/en/development-tools/stm32cube-programmer
+1. 打开 https://www.st.com/en/development-tools/stm32cubeprog.html
 2. 点击 **Get Software**，下载 Windows 版 `.exe`
    - 文件名类似：`SetupSTM32CubeProgrammer-2.17.0.exe`
 3. 双击运行安装，路径保持默认

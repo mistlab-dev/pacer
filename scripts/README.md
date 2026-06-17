@@ -8,7 +8,7 @@
 |------|------|----------|
 | **GNU Arm Embedded Toolchain** | 9-2019-q4-major 或更高 | https://developer.arm.com/tools-and-software/open-source-software/developer-tools/gnu-toolchain/gnu-arm |
 | **CMake** | 3.15+ | https://cmake.org/download/ |
-| **STM32CubeProgrammer** | 任意版本 | https://www.st.com/en/development-tools/stm32cube-programmer |
+| **STM32CubeProgrammer** | 任意版本 | https://www.st.com/en/development-tools/stm32cubeprog.html |
 | **STM32CubeMX** | 任意版本（生成 HAL/FreeRTOS） | https://www.st.com/en/development-tools/stm32cubemx |
 
 ### 2. 脚本使用

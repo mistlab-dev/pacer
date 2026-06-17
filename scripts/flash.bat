@@ -17,7 +17,7 @@ if not exist "%STLINK_PATH%\STM32_Programmer_CLI.exe" (
 if not exist "%STLINK_PATH%\STM32_Programmer_CLI.exe" (
     echo [ERROR] ST-Link Programmer CLI not found
     echo Please install STM32CubeProgrammer from:
-    echo https://www.st.com/en/development-tools/stm32cube-programmer
+    echo https://www.st.com/en/development-tools/stm32cubeprog.html
     exit /b 1
 )
 
