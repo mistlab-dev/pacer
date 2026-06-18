@@ -108,6 +108,7 @@ set(PACER_SOURCES
     src/motor/motor.c
     src/remote/remote.c
     src/app/app.c
+    src/app/cli.c
 )
 
 add_compile_definitions(
