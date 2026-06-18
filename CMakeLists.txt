@@ -6,12 +6,19 @@
 
 cmake_minimum_required(VERSION 3.16)
 
+set(CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY)
+
+# 在 project() 之前设置编译器参数
+set(CMAKE_C_FLAGS_INIT "-B/opt/arm-none-eabi-bin -mcpu=cortex-m7 -mthumb -mfpu=fpv5-sp-d16 -mfloat-abi=hard")
+set(CMAKE_ASM_FLAGS_INIT "-B/opt/arm-none-eabi-bin -mcpu=cortex-m7 -mthumb -mfpu=fpv5-sp-d16 -mfloat-abi=hard")
+
 project(pacer C ASM)
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 
 add_compile_options(
+    -B/opt/arm-none-eabi-bin
     -mcpu=cortex-m7
     -mthumb
     -mfpu=fpv5-sp-d16
@@ -26,6 +33,7 @@ add_compile_options(
 )
 
 add_link_options(
+    -B/opt/arm-none-eabi/bin
     -mcpu=cortex-m7
     -mthumb
     -mfpu=fpv5-sp-d16
