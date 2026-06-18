@@ -25,7 +25,7 @@
 /* 滤波: 滑动平均 */
 #define BAT_FILTER_SIZE  8
 
-static ADC_HandleTypeDef hadc1;
+ADC_HandleTypeDef hadc1;
 static float    g_voltage   = 0.0f;
 static uint16_t g_filter_buf[BAT_FILTER_SIZE];
 static uint8_t  g_filter_idx = 0;
@@ -38,15 +38,8 @@ static float raw_to_voltage(uint16_t raw)
 
 void battery_init(void)
 {
-    __HAL_RCC_ADC1_CLK_ENABLE();
-    __HAL_RCC_GPIOA_CLK_ENABLE();
-
-    /* PA5 → ADC1_CH5 analog input */
-    GPIO_InitTypeDef gpio = {0};
-    gpio.Pin  = GPIO_PIN_5;
-    gpio.Mode = GPIO_MODE_ANALOG;
-    gpio.Pull = GPIO_NOPULL;
-    HAL_GPIO_Init(GPIOA, &gpio);
+    /* GPIO/RCC/校准由 HAL_ADC_MspInit (stm32h7xx_hal_msp.c) 处理
+     * 这里只配置 ADC 参数 + 通道 + 校准 */
 
     hadc1.Instance                   = ADC1;
     hadc1.Init.ClockPrescaler        = ADC_CLOCK_SYNC_PCLK_DIV4;

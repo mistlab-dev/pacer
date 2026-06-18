@@ -66,24 +66,6 @@ void SystemClock_Config(void)
     }
 }
 
-/* ================ I2C1 MSP 初始化 ================ */
-
-void HAL_I2C_MspInit(I2C_HandleTypeDef *hi2c)
-{
-    if (hi2c->Instance == I2C1) {
-        __HAL_RCC_I2C1_CLK_ENABLE();
-        __HAL_RCC_GPIOB_CLK_ENABLE();
-
-        GPIO_InitTypeDef g = {0};
-        g.Pin       = GPIO_PIN_6 | GPIO_PIN_7;  /* PB6=SCL, PB7=SDA */
-        g.Mode      = GPIO_MODE_AF_OD;
-        g.Pull      = GPIO_PULLUP;
-        g.Speed     = GPIO_SPEED_FREQ_HIGH;
-        g.Alternate = GPIO_AF4_I2C1;
-        HAL_GPIO_Init(GPIOB, &g);
-    }
-}
-
 /* ================ main ================ */
 
 int main(void)
@@ -102,28 +84,6 @@ int main(void)
     app_run();
 
     /* 不应该到这里 */
-    while (1) { }
-}
-
-/* ================ FreeRTOS 钩子函数 ================ */
-
-void vApplicationStackOverflowHook(TaskHandle_t xTask, char *pcTaskName)
-{
-    printf("[FATAL] stack overflow in %s\r\n", pcTaskName);
-    while (1) { }
-}
-
-void vApplicationMallocFailedHook(void)
-{
-    printf("[FATAL] malloc failed\r\n");
-    while (1) { }
-}
-
-/* ================ HardFault Handler ================ */
-
-void HardFault_Handler(void)
-{
-    printf("[FATAL] HardFault!\r\n");
     while (1) { }
 }
 

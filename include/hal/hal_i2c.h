@@ -20,6 +20,12 @@ typedef struct {
 } i2c_dev_t;
 
 /**
+ * @brief 初始化 I2C1 外设 (400kHz Fast-mode)
+ *        在 i2c_open 之前调用。
+ */
+void hal_i2c1_init(void);
+
+/**
  * @brief 打开 I2C 设备
  * @param dev  设备句柄
  * @param bus  总线号 ( unused — STM32 通过 HAL handle 决定 )

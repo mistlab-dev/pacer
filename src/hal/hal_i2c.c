@@ -12,8 +12,25 @@
 #include "stm32h7xx_hal.h"
 #include <string.h>
 
-/* I2C1 全局句柄 — 由 CubeMX 生成或在 main 中初始化 */
+/* I2C1 全局句柄 */
 I2C_HandleTypeDef hi2c1;
+
+/* ---- I2C1 外设初始化 (由 app_init 调用) ---- */
+void hal_i2c1_init(void)
+{
+    hi2c1.Instance              = I2C1;
+    hi2c1.Init.Timing           = 0x10C15B88;  /* 400kHz Fast-mode, APB1=120MHz */
+    hi2c1.Init.OwnAddress1      = 0;
+    hi2c1.Init.AddressingMode   = I2C_ADDRESSINGMODE_7BIT;
+    hi2c1.Init.DualAddressMode  = I2C_DUALADDRESS_DISABLE;
+    hi2c1.Init.OwnAddress2      = 0;
+    hi2c1.Init.GeneralCallMode  = I2C_GENERALCALL_DISABLE;
+    hi2c1.Init.NoStretchMode    = I2C_NOSTRETCH_DISABLE;
+
+    if (HAL_I2C_Init(&hi2c1) != HAL_OK) {
+        /* 初始化失败 — 调用方检查设备就绪时会发现 */
+    }
+}
 
 /* I2C 设备对应的 bus → STM32 只有一个 I2C1 接 IMU */
 static I2C_HandleTypeDef *bus_to_handle(int bus)
