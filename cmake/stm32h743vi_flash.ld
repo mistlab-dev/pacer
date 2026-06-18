@@ -135,7 +135,10 @@ SECTIONS
         __bss_end__ = _ebss;
     } >RAM
 
-    /* FreeRTOS 堆 — 放 AXI SRAM */
+    /* FreeRTOS 堆 — 放 AXI SRAM.
+     * _end 在此处定义, _sbrk 从 _end 向前分配 newlib heap.
+     * _heap_limit 用 RAM region 末尾做边界 (不走 _estack, 它在 DTCM).
+     */
     .heap :
     {
         . = ALIGN(8);
@@ -143,13 +146,13 @@ SECTIONS
         PROVIDE(_end = .);
         . = . + _Min_Heap_Size;
         . = ALIGN(8);
+        _heap_limit = ORIGIN(RAM) + LENGTH(RAM);
     } >RAM
 
-    /* 检查栈空间 */
-    ._user_heap_stack :
+    /* 最小栈空间 — 放 DTCM (栈从 _estack 向下生长) */
+    ._user_stack :
     {
         . = ALIGN(8);
-        . = . + _Min_Heap_Size;
         . = . + _Min_Stack_Size;
         . = ALIGN(8);
     } >DTCMRAM

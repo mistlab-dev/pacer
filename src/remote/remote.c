@@ -2,14 +2,6 @@
  * @file remote.c
  * @brief 遥控接收 — UART 串口实现
  *
- * 协议 (18 字节帧):
- *   [0]     0xAA       帧头 1
- *   [1]     0x55       帧头 2
- *   [2..5]  throttle   float, 0~1,   小端
- *   [6..9]  roll       float, -1~+1, 小端
- *   [10..13] pitch     float, -1~+1, 小端
- *   [14..17] yaw       float, -1~+1, 小端
- *
  * 协议 (19 字节帧, v2 — 含 XOR 校验):
  *   [0]     0xAA       帧头 1
  *   [1]     0x55       帧头 2
@@ -87,7 +79,8 @@ static void parse_frame(const uint8_t *frame)
     if (yaw < -1.0f) yaw = -1.0f;
     if (yaw > 1.0f)  yaw = 1.0f;
 
-    taskENTER_CRITICAL_FROM_ISR();
+    /* 在 ISR 上下文中使用 FromISR 版本 */
+    uint32_t saved = taskENTER_CRITICAL_FROM_ISR();
     g.cmd.throttle = throttle;
     g.cmd.roll     = roll;
     g.cmd.pitch    = pitch;
@@ -97,7 +90,7 @@ static void parse_frame(const uint8_t *frame)
     g.last_rx_ms   = HAL_GetTick();
     g.connected    = true;
     g.frame_count++;
-    taskEXIT_CRITICAL_FROM_ISR();
+    taskEXIT_CRITICAL_FROM_ISR(saved);
 }
 
 /* ================ UART 接收 ================ */

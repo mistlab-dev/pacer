@@ -63,11 +63,11 @@ int _write(int fd, const char *ptr, int len)
 void *_sbrk(int incr)
 {
     extern char _end;
-    extern char _estack;
+    extern char _heap_limit;   /* 链接脚本定义, AXI SRAM 末尾 */
     static char *heap_end = &_end;
     char *prev = heap_end;
 
-    if (heap_end + incr > (char *)&_estack - 0x400) {
+    if (heap_end + incr > (char *)&_heap_limit) {
         errno = ENOMEM;
         return (void *)-1;
     }
