@@ -24,6 +24,7 @@
 #include "motor/motor.h"
 #include "remote/remote.h"
 #include "hal/hal_gpio.h"
+#include "hal/hal_i2c.h"
 #include "hal/hal_tim.h"
 #include "hal/led.h"
 #include "hal/watchdog.h"
@@ -52,6 +53,9 @@ static struct {
     bool             armed;
     bool             flying;
     bool             emergency;
+    bool             landing;        /* 自动降落中 */
+    float            land_throttle;  /* 降落油门 (递减) */
+    float            takeoff_throttle; /* 起飞油门 (递增) */
 
     /* 遥控 */
     remote_cmd_t  rc;
@@ -84,11 +88,7 @@ static void check_safety(void)
     if (bat == BATTERY_CRITICAL && g.flying) {
         printf("[SAFETY] battery %.1fV CRITICAL → auto-land\r\n",
                battery_get_voltage());
-        quad_mixer_stop(&g.mixer);
-        motor_stop_all();
-        g.flying    = false;
-        g.emergency = true;
-        led_set_state(LED_BLINK_DOUBLE);
+        g.landing = true;  /* 进入自动降落模式 */
     } else if (bat == BATTERY_WARNING) {
         /* 低压警告: 快闪 LED */
         if (g.flying) led_set_state(LED_BLINK_FAST);
@@ -97,11 +97,47 @@ static void check_safety(void)
 
 static void handle_lost_signal(void)
 {
-    if (!remote_is_connected() && g.flying) {
-        printf("[SAFETY] signal lost → cut throttle\r\n");
+    if (!remote_is_connected()) {
+        if (g.flying && !g.landing) {
+            printf("[SAFETY] signal lost → auto-land\r\n");
+            g.landing = true;
+        }
+    }
+}
+
+/* ---- 自动降落: 缓慢降低油门 ---- */
+static void update_landing(float dt)
+{
+    if (!g.landing) return;
+
+    /* 油门按速率下降 */
+    g.land_throttle -= CFG_LANDING_DESCENT_RATE * dt;
+    if (g.land_throttle < 0.0f) g.land_throttle = 0.0f;
+
+    /* 用降落油门驱动，保持水平 */
+    attitude_set_input(&g.att_ctrl, g.land_throttle, 0.0f, 0.0f, 0.0f);
+    const attitude_output_t *out =
+        attitude_update(&g.att_ctrl, &g.attitude, &g.imu_sample, CFG_CONTROL_DT);
+
+    mixer_output_t motors = quad_mixer_update(&g.mixer,
+                                               out->throttle,
+                                               out->roll,
+                                               out->pitch,
+                                               out->yaw);
+    motor_set(MOTOR_FL, motors.motor[QUAD_FL]);
+    motor_set(MOTOR_FR, motors.motor[QUAD_FR]);
+    motor_set(MOTOR_RL, motors.motor[QUAD_RL]);
+    motor_set(MOTOR_RR, motors.motor[QUAD_RR]);
+
+    /* 触地: 油门低于阈值 → 停机 */
+    if (g.land_throttle <= CFG_LANDING_THROTTLE_MIN) {
+        printf("[APP] landing complete\r\n");
         quad_mixer_stop(&g.mixer);
         motor_stop_all();
-        g.flying = false;
+        g.flying   = false;
+        g.landing  = false;
+        g.armed    = false;
+        led_set_state(LED_BLINK_SLOW);
     }
 }
 
@@ -133,11 +169,29 @@ static void ctrl_task(void *arg)
         /* 3. 安全检查 */
         check_safety();
 
-        /* 4. 姿态控制 + 混控 + 电机输出 */
+        /* 4. 自动降落模式 */
+        if (g.landing && !g.emergency) {
+            update_landing(CFG_CONTROL_DT);
+            continue;
+        }
+
+        /* 5. 姿态控制 + 混控 + 电机输出 */
         if (g.flying && !g.emergency) {
+            /* 起飞油门渐变: 从 hover 的 50% 平滑爬升 */
+            float effective_thr = g.rc.throttle;
+            if (g.takeoff_throttle < CFG_TAKEOFF_THROTTLE) {
+                /* 起飞阶段: 油门从 0 渐增至起飞阈值 */
+                g.takeoff_throttle += CFG_TAKEOFF_RAMP_RATE * CFG_CONTROL_DT;
+                if (g.takeoff_throttle > CFG_TAKEOFF_THROTTLE)
+                    g.takeoff_throttle = CFG_TAKEOFF_THROTTLE;
+                /* 取用户油门和渐变油门的最大值 */
+                if (effective_thr < g.takeoff_throttle)
+                    effective_thr = g.takeoff_throttle;
+            }
+
             /* 设置遥控输入到姿态控制器 */
             attitude_set_input(&g.att_ctrl,
-                               g.rc.throttle,
+                               effective_thr,
                                g.rc.roll,
                                g.rc.pitch,
                                g.rc.yaw);
@@ -209,7 +263,8 @@ static void rx_task(void *arg)
             emg_clear_start = 0;
         }
 
-        /* 解锁: 油门<5% + yaw 左满 + IMU正常 + 遥控已连接 */
+        /* 解锁: 油门<5% + yaw 左满 + 持续 3s + IMU正常 + 遥控已连接 */
+        static uint32_t arm_start = 0;
         if (!g.armed &&
             rc_new.throttle < 0.05f &&
             rc_new.yaw < -0.9f &&
@@ -217,15 +272,29 @@ static void rx_task(void *arg)
             remote_is_connected()) {
             battery_status_t bat = battery_get_status();
             if (bat == BATTERY_CRITICAL) {
+                arm_start = 0;
                 printf("[APP] cannot arm: battery critical\r\n");
             } else {
-                printf("[APP] arming...\r\n");
-                motor_arm();
-                quad_mixer_arm(&g.mixer);
-                attitude_init(&g.att_ctrl);
-                attitude_enable(&g.att_ctrl, true);
-                g.armed = true;
+                if (arm_start == 0) {
+                    arm_start = HAL_GetTick();
+                } else if (HAL_GetTick() - arm_start > (uint32_t)(CFG_ARM_STICK_TIMEOUT_SEC * 1000)) {
+                    /* 飞前检查 */
+                    if (imu_self_test() != 0) {
+                        printf("[APP] cannot arm: IMU self-test failed\r\n");
+                        arm_start = 0;
+                    } else {
+                        printf("[APP] arming...\r\n");
+                        motor_arm();
+                        quad_mixer_arm(&g.mixer);
+                        attitude_init(&g.att_ctrl);
+                        attitude_enable(&g.att_ctrl, true);
+                        g.armed = true;
+                        arm_start = 0;
+                    }
+                }
             }
+        } else if (!g.armed) {
+            arm_start = 0;  /* 摇杆松开重置计时 */
         }
 
         /* 上锁: 油门<5% + yaw 右满 */
@@ -239,19 +308,19 @@ static void rx_task(void *arg)
         }
 
         /* 起飞: 油门>30% 且已解锁 */
-        if (g.armed && !g.flying &&
+        if (g.armed && !g.flying && !g.landing &&
             rc_new.throttle > 0.3f) {
             printf("[APP] takeoff!\r\n");
-            g.flying = true;
+            g.flying          = true;
+            g.takeoff_throttle = 0.0f;  /* 从 0 开始渐变 */
         }
 
-        /* 降落/停止: 油门<10% 且在飞 */
-        if (g.flying &&
+        /* 降落: 油门<10% 且在飞 → 进入自动降落 */
+        if (g.flying && !g.landing &&
             rc_new.throttle < 0.1f) {
-            printf("[APP] landing/cut\r\n");
-            quad_mixer_stop(&g.mixer);
-            motor_stop_all();
-            g.flying = false;
+            printf("[APP] landing...\r\n");
+            g.landing       = true;
+            g.land_throttle = CFG_HOVER_THROTTLE;  /* 从悬停开始降 */
         }
 
         /* 信号丢失 */
@@ -308,6 +377,9 @@ int app_init(void)
     hal_gpio_init();
     usart_printf_init();
     printf("\r\n=== PACER v3.0 (STM32H743) ===\r\n");
+
+    /* I2C1 总线 (IMU 用) */
+    hal_i2c1_init();
 
     /* LED */
     led_init();
