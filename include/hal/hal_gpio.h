@@ -29,5 +29,6 @@ void hal_delay_ms(unsigned int ms);
 
 /* 获取单调微秒时间戳 (基于 DWT) */
 unsigned int hal_micros(void);
+uint64_t     hal_micros_64(void);  /* 64-bit, 防 32-bit 溢出 */
 
 #endif /* PACER_HAL_GPIO_H */

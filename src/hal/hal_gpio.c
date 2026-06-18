@@ -16,6 +16,10 @@
 
 static int g_initialized = 0;
 
+/* 64-bit 微秒计数器 — 滚动补偿 */
+static uint32_t g_last_cycles = 0;
+static uint64_t g_micros_base = 0;
+
 int hal_gpio_init(void)
 {
     if (g_initialized) return 0;
@@ -99,6 +103,19 @@ void hal_delay_ms(unsigned int ms)
 
 unsigned int hal_micros(void)
 {
-    /* DWT 计数器 / (cycles per μs) → 微秒 */
-    return DWT_CYCCNT / (SystemCoreClock / 1000000U);
+    return (unsigned int)hal_micros_64();
+}
+
+uint64_t hal_micros_64(void)
+{
+    uint32_t now = DWT_CYCCNT;
+    uint32_t cycles_per_us = SystemCoreClock / 1000000U;
+
+    /* 检测 DWT 32-bit 回卷 */
+    if (now < g_last_cycles) {
+        g_micros_base += 0x100000000ULL / cycles_per_us;
+    }
+    g_last_cycles = now;
+
+    return g_micros_base + (uint64_t)(now / cycles_per_us);
 }

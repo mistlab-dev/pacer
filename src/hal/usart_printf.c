@@ -1,9 +1,12 @@
 /**
  * @file usart_printf.c
- * @brief UART printf 重定向实现 — STM32H743 USART2
+ * @brief UART printf 重定向 + MSP 实现 — STM32H743
  *
  * PA2(TX) / PA3(RX), 115200 8N1
  * 重定向 fputc → HAL_UART_Transmit
+ *
+ * 本文件提供 HAL_UART_MspInit / HAL_UART_MspDeInit
+ * 覆盖 USART2 (调试) 和 USART3 (遥控)。
  */
 
 #include "usart_printf.h"
@@ -64,4 +67,34 @@ int fputc(int ch, FILE *f)
     uint8_t b = (uint8_t)ch;
     HAL_UART_Transmit(&huart2, &b, 1, 10);
     return ch;
+}
+
+/* USART MSP DeInit */
+void HAL_UART_MspDeInit(UART_HandleTypeDef *huart)
+{
+    if (huart->Instance == USART2) {
+        HAL_GPIO_DeInit(GPIOA, GPIO_PIN_2 | GPIO_PIN_3);
+        __HAL_RCC_USART2_CLK_DISABLE();
+    }
+
+    if (huart->Instance == USART3) {
+        __HAL_RCC_USART3_FORCE_RESET();
+        __HAL_RCC_USART3_RELEASE_RESET();
+
+        HAL_GPIO_DeInit(GPIOD, GPIO_PIN_8 | GPIO_PIN_9);
+        __HAL_RCC_USART3_CLK_DISABLE();
+    }
+}
+
+/* UART 错误回调 — 防止 Overrun/Noise/Framing 错误导致接收永久死锁 */
+void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
+{
+    if (huart->Instance == USART3) {
+        /* 清除错误标志, 重启接收 */
+        __HAL_UART_CLEAR_OREFLAG(huart);
+        huart->ErrorCode = HAL_UART_ERROR_NONE;
+        /* remote.c 中的单字节接收变量; 此处重新启动中断接收 */
+        extern uint8_t rx_byte;  /* remote.c: static → 需改为非 static */
+        HAL_UART_Receive_IT(huart, &rx_byte, 1);
+    }
 }

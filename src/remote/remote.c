@@ -87,7 +87,7 @@ static void parse_frame(const uint8_t *frame)
     if (yaw < -1.0f) yaw = -1.0f;
     if (yaw > 1.0f)  yaw = 1.0f;
 
-    taskENTER_CRITICAL();
+    taskENTER_CRITICAL_FROM_ISR();
     g.cmd.throttle = throttle;
     g.cmd.roll     = roll;
     g.cmd.pitch    = pitch;
@@ -97,7 +97,7 @@ static void parse_frame(const uint8_t *frame)
     g.last_rx_ms   = HAL_GetTick();
     g.connected    = true;
     g.frame_count++;
-    taskEXIT_CRITICAL();
+    taskEXIT_CRITICAL_FROM_ISR();
 }
 
 /* ================ UART 接收 ================ */
@@ -107,7 +107,7 @@ static void parse_frame(const uint8_t *frame)
  * 优点: 简单可靠, 不需要 DMA 配置。
  */
 
-static uint8_t  rx_byte;
+uint8_t  rx_byte;   /* 去掉 static — usart_printf.c ErrorCallback 需 extern */
 static uint8_t  rx_buf[FRAME_SIZE];
 static uint8_t  rx_idx = 0;
 

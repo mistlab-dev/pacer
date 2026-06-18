@@ -101,7 +101,7 @@ static inline int16_t to_i16(uint8_t hi, uint8_t lo)
 /* DWT 微秒时间戳 */
 static uint64_t now_us(void)
 {
-    return (uint64_t)hal_micros();
+    return hal_micros_64();
 }
 
 /* ================ 驱动实现 ================ */

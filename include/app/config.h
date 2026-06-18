@@ -101,14 +101,15 @@
 /* ==================== 遥控 (UART) ==================== */
 
 /*
- * UART3 (PD8/PD9 ≈ USART3) 用于遥控
- * 协议: 16 字节帧, 与之前 UDP 兼容
- *   [0..3]  throttle (float, 0~1, 小端)
- *   [4..7]  roll     (float, -1~+1, 小端)
- *   [8..11] pitch    (float, -1~+1, 小端)
- *   [12..15] yaw     (float, -1~+1, 小端)
- *   帧头: 0xAA 0x55 (2 字节同步)
- *   总帧长: 18 字节
+ * USART3 (PD8 TX / PD9 RX) 用于遥控
+ * 协议: 19 字节帧 (v2 — 含 XOR 校验)
+ *   [0]     0xAA    帧头 1
+ *   [1]     0x55    帧头 2
+ *   [2..5]  throttle (float, 0~1, 小端)
+ *   [6..9]  roll     (float, -1~+1, 小端)
+ *   [10..13] pitch    (float, -1~+1, 小端)
+ *   [14..17] yaw      (float, -1~+1, 小端)
+ *   [18]    XOR      前 18 字节异或校验
  */
 #define CFG_REMOTE_UART            USART3
 #define CFG_REMOTE_UART_BAUD       115200

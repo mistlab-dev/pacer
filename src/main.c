@@ -37,8 +37,8 @@ void SystemClock_Config(void)
     osc.PLL.PLLState   = RCC_PLL_ON;
     osc.PLL.PLLSource  = RCC_PLLSOURCE_HSI;
     osc.PLL.PLLM       = 4;   /* HSI=64MHz / 4 = 16MHz */
-    osc.PLL.PLLN       = 120; /* 16MHz * 120 = 1920MHz VCO */
-    osc.PLL.PLLP       = 2;   /* 1920 / 2 = 960MHz SYS */
+    osc.PLL.PLLN       = 60;  /* 16MHz * 60 = 960MHz VCO (H743 max) */
+    osc.PLL.PLLP       = 2;   /* 960 / 2 = 480MHz SYS ✓ */
     osc.PLL.PLLQ       = 15;  /* USB 48MHz */
     osc.PLL.PLLR       = 2;
 
@@ -81,18 +81,6 @@ void HAL_I2C_MspInit(I2C_HandleTypeDef *hi2c)
         g.Speed     = GPIO_SPEED_FREQ_HIGH;
         g.Alternate = GPIO_AF4_I2C1;
         HAL_GPIO_Init(GPIOB, &g);
-    }
-}
-
-/* ================ USART3 RX 完成回调 ================ */
-
-void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
-{
-    if (huart->Instance == USART3) {
-        extern UART_HandleTypeDef huart3;
-        extern void remote_uart_rx_callback(uint8_t b);
-        remote_uart_rx_callback(huart3.pRxBuffPtr[0]);
-        HAL_UART_Receive_IT(&huart3, huart3.pRxBuffPtr, 1);
     }
 }
 
