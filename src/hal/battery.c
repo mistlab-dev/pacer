@@ -41,25 +41,29 @@ void battery_init(void)
     /* GPIO/RCC/校准由 HAL_ADC_MspInit (stm32h7xx_hal_msp.c) 处理
      * 这里只配置 ADC 参数 + 通道 + 校准 */
 
-    hadc1.Instance                   = ADC1;
-    hadc1.Init.ClockPrescaler        = ADC_CLOCK_SYNC_PCLK_DIV4;
-    hadc1.Init.Resolution            = ADC_RESOLUTION_12B;
-    hadc1.Init.ScanConvMode          = ADC_SCAN_DISABLE;
-    hadc1.Init.ContinuousConvMode    = DISABLE;
-    hadc1.Init.DiscontinuousConvMode = DISABLE;
-    hadc1.Init.ExternalTrigConvEdge  = ADC_EXTERNALTRIGCONVEDGE_NONE;
-    hadc1.Init.ExternalTrigConv      = ADC_SOFTWARE_START;
-    hadc1.Init.DataAlign             = ADC_DATAALIGN_RIGHT;
-    hadc1.Init.NbrOfConversion       = 1;
-    hadc1.Init.DMAContinuousRequests = DISABLE;
-    hadc1.Init.EOCSelection          = ADC_EOC_SINGLE_CONV;
+    hadc1.Instance                      = ADC1;
+    hadc1.Init.ClockPrescaler             = ADC_CLOCK_SYNC_PCLK_DIV4;
+    hadc1.Init.Resolution                 = ADC_RESOLUTION_12B;
+    hadc1.Init.ScanConvMode               = ADC_SCAN_DISABLE;
+    hadc1.Init.EOCSelection               = ADC_EOC_SINGLE_CONV;
+    hadc1.Init.LowPowerAutoWait           = DISABLE;
+    hadc1.Init.ContinuousConvMode         = DISABLE;
+    hadc1.Init.NbrOfConversion            = 1;
+    hadc1.Init.DiscontinuousConvMode        = DISABLE;
+    hadc1.Init.ExternalTrigConv           = ADC_SOFTWARE_START;
+    hadc1.Init.ExternalTrigConvEdge       = ADC_EXTERNALTRIGCONVEDGE_NONE;
+    hadc1.Init.ConversionDataManagement   = ADC_CONVERSIONDATA_DR;
+    hadc1.Init.Overrun                    = ADC_OVR_DATA_OVERWRITTEN;
+    hadc1.Init.LeftBitShift               = ADC_LEFTBITSHIFT_NONE;
+    hadc1.Init.OversamplingMode           = DISABLE;
 
     if (HAL_ADC_Init(&hadc1) != HAL_OK) return;
 
     ADC_ChannelConfTypeDef ch = {0};
     ch.Channel      = ADC_CHANNEL_5;
-    ch.Rank         = 1;
+    ch.Rank         = ADC_REGULAR_RANK_1;
     ch.SamplingTime = ADC_SAMPLETIME_64CYCLES_5;
+    ch.SingleDiff   = ADC_SINGLE_ENDED;
     HAL_ADC_ConfigChannel(&hadc1, &ch);
 
     /* 校准 */

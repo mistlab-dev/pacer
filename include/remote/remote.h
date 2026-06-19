@@ -41,7 +41,8 @@ int  remote_poll(remote_cmd_t *out);
 bool remote_is_connected(void);
 void remote_disconnect(void);
 
-/* UART 中断回调 (由 stm32xx_it.c 中的 USART3_IRQHandler 调用) */
+/* UART 中断回调 (由 HAL_UART_RxCpltCallback 调用) */
 void remote_uart_rx_callback(uint8_t b);
+extern uint8_t rx_byte;
 
 #endif /* PACER_REMOTE_H */

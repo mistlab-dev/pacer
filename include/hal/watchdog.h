@@ -12,6 +12,7 @@
 #define PACER_WATCHDOG_H
 
 #include <stdbool.h>
+#include <stdint.h>
 
 /**
  * @brief 初始化独立看门狗

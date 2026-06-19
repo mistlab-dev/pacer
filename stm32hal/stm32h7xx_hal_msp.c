@@ -63,7 +63,7 @@ void HAL_TIM_PWM_MspInit(TIM_HandleTypeDef *htim)
 void HAL_ADC_MspInit(ADC_HandleTypeDef *hadc)
 {
     if (hadc->Instance == ADC1) {
-        __HAL_RCC_ADC1_CLK_ENABLE();
+        __HAL_RCC_ADC12_CLK_ENABLE();
         __HAL_RCC_GPIOA_CLK_ENABLE();
 
         GPIO_InitTypeDef g = {0};
@@ -81,6 +81,6 @@ void HAL_ADC_MspDeInit(ADC_HandleTypeDef *hadc)
 {
     if (hadc->Instance == ADC1) {
         HAL_GPIO_DeInit(GPIOA, GPIO_PIN_5);
-        __HAL_RCC_ADC1_CLK_DISABLE();
+        __HAL_RCC_ADC12_CLK_DISABLE();
     }
 }

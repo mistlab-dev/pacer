@@ -14,13 +14,13 @@ import (
 	"go.bug.st/serial"
 )
 
-// 遥控帧协议: 0xAA 0x55 + throttle(float32) + roll(float32) + pitch(float32) + yaw(float32)
-// 共 18 字节, 小端序
+// 遥控帧协议 v2: 0xAA 0x55 + 4×float32 + XOR 校验
+// 共 19 字节, 小端序
 
 const (
 	frameHeader1 = 0xAA
 	frameHeader2 = 0x55
-	frameSize    = 18
+	frameSize    = 19
 )
 
 // RemoteCmd 遥控命令
@@ -31,7 +31,7 @@ type RemoteCmd struct {
 	Yaw      float32 // 偏航 -1~+1 (左负右正)
 }
 
-// Encode 编码为 18 字节帧
+// Encode 编码为 19 字节帧 (含 XOR 校验)
 func (c *RemoteCmd) Encode() []byte {
 	buf := make([]byte, frameSize)
 	buf[0] = frameHeader1
@@ -40,6 +40,11 @@ func (c *RemoteCmd) Encode() []byte {
 	binary.LittleEndian.PutUint32(buf[6:10], math.Float32bits(c.Roll))
 	binary.LittleEndian.PutUint32(buf[10:14], math.Float32bits(c.Pitch))
 	binary.LittleEndian.PutUint32(buf[14:18], math.Float32bits(c.Yaw))
+	var crc byte
+	for i := 0; i < frameSize-1; i++ {
+		crc ^= buf[i]
+	}
+	buf[18] = crc
 	return buf
 }
 

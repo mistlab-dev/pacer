@@ -16,6 +16,7 @@
 
 #include "app/app.h"
 #include "app/config.h"
+#include "app/cli.h"
 #include "sensor/imu.h"
 #include "sensor/imu_icm20948.h"
 #include "filter/filter.h"
@@ -385,9 +386,6 @@ int app_init(void)
     led_init();
     led_set_state(LED_BREATH);  /* 校准中 */
 
-    /* 看门狗 */
-    watchdog_init(CFG_WATCHDOG_TIMEOUT_MS);
-
     /* Timer PWM (电机) */
     hal_tim_pwm_init();
     motor_init();
@@ -404,14 +402,14 @@ int app_init(void)
         .accel_range_g  = CFG_IMU_ACCEL_RANGE_G,
         .gyro_range_dps = CFG_IMU_GYRO_RANGE_DPS,
     };
+    g.imu_ok = false;
     if (imu_init(&imu_cfg) != 0) {
-        printf("[APP] IMU init FAILED\r\n");
-        return -1;
+        printf("[APP] IMU init FAILED (no sensor?) — running without IMU\r\n");
+    } else {
+        printf("[APP] calibrating gyro...\r\n");
+        imu_calibrate_gyro(500);
+        g.imu_ok = true;
     }
-
-    /* 陀螺仪校准 */
-    printf("[APP] calibrating gyro...\r\n");
-    imu_calibrate_gyro(500);
 
     /* 滤波器 */
     filter_config_t fcfg = FILTER_CONFIG_DEFAULT;
@@ -435,6 +433,9 @@ int app_init(void)
     /* 遥控 */
     remote_init();
 
+    /* CLI (USART2 在线调参) */
+    cli_init();
+
     g.running   = true;
     g.armed     = false;
     g.flying    = false;
@@ -442,6 +443,10 @@ int app_init(void)
 
     printf("[APP] init OK, ready to arm (throttle 0 + yaw left)\r\n");
     led_set_state(LED_BLINK_SLOW);  /* idle */
+
+    /* 初始化完成后再启动看门狗，避免校准阶段超时复位 */
+    watchdog_init(CFG_WATCHDOG_TIMEOUT_MS);
+
     return 0;
 }
 
@@ -489,3 +494,6 @@ fail:
 const attitude_t *app_get_attitude(void) { return &g.attitude; }
 const imu_sample_t *app_get_imu(void)    { return &g.imu_sample; }
 bool app_is_emergency(void)              { return g.emergency; }
+bool app_is_armed(void)                  { return g.armed; }
+bool app_is_flying(void)                 { return g.flying; }
+attitude_ctrl_t *app_get_att_ctrl(void)  { return &g.att_ctrl; }

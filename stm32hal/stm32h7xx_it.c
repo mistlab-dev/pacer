@@ -17,7 +17,7 @@ extern void xPortSysTickHandler(void);
 
 extern UART_HandleTypeDef huart3;
 extern UART_HandleTypeDef huart2;
-extern void HAL_UART_RxCpltCallback(UART_HandleTypeDef *);
+extern void remote_uart_rx_callback(uint8_t b);
 
 /* ============ 系统异常处理 ============ */
 
@@ -97,6 +97,13 @@ void vApplicationMallocFailedHook(void)
     const char *msg = "\r\n[FATAL] malloc failed\r\n";
     HAL_UART_Transmit(&huart2, (uint8_t *)msg, strlen(msg), 100);
     for (;;);
+}
+
+/* ============ USART2 全局中断 (CLI) ============ */
+
+void USART2_IRQHandler(void)
+{
+    HAL_UART_IRQHandler(&huart2);
 }
 
 /* ============ USART3 全局中断 (遥控接收) ============ */

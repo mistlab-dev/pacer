@@ -18,6 +18,7 @@
 
 #include "stm32h7xx_hal.h"
 #include "app/app.h"
+#include "hal/led.h"
 #include "usart_printf.h"
 #include "FreeRTOS.h"
 #include "task.h"
@@ -77,7 +78,10 @@ int main(void)
     /* 2. 应用初始化 */
     if (app_init() != 0) {
         printf("[MAIN] init failed!\r\n");
-        while (1) { HAL_Delay(1000); }
+        while (1) {
+            HAL_Delay(500);
+            led_tick();
+        }
     }
 
     /* 3. 启动 FreeRTOS (不返回) */

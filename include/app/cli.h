@@ -6,16 +6,10 @@
 #ifndef PACER_CLI_H
 #define PACER_CLI_H
 
-/**
- * @brief 初始化 CLI 任务
- *        创建 FreeRTOS 任务处理 USART2 接收的命令。
- */
-void cli_init(void);
+#include <stdint.h>
 
-/**
- * @brief CLI 任务入口 (FreeRTOS)
- *        由 cli_init 创建，不应直接调用。
- */
-void cli_task(void *arg);
+void cli_init(void);
+void cli_rx_byte_cb(uint8_t b);
+extern uint8_t cli_rx_byte;
 
 #endif /* PACER_CLI_H */

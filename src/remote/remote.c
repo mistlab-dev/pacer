@@ -208,13 +208,3 @@ void remote_disconnect(void)
 {
     g.connected = false;
 }
-
-/* ================ HAL 回调 (由 stm32h7xx_it.c → HAL_UART_IRQHandler 调用) ================ */
-
-void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
-{
-    if (huart->Instance == USART3) {
-        remote_uart_rx_callback(rx_byte);
-        HAL_UART_Receive_IT(&huart3, &rx_byte, 1);
-    }
-}

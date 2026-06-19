@@ -10,9 +10,13 @@
  */
 
 #include "usart_printf.h"
+#include "app/cli.h"
+#include "remote/remote.h"
 #include "stm32h7xx_hal.h"
+#include <stdio.h>
 
 UART_HandleTypeDef huart2;
+extern UART_HandleTypeDef huart3;
 
 void usart_printf_init(void)
 {
@@ -90,11 +94,24 @@ void HAL_UART_MspDeInit(UART_HandleTypeDef *huart)
 void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
 {
     if (huart->Instance == USART3) {
-        /* 清除错误标志, 重启接收 */
         __HAL_UART_CLEAR_OREFLAG(huart);
         huart->ErrorCode = HAL_UART_ERROR_NONE;
-        /* remote.c 中的单字节接收变量; 此处重新启动中断接收 */
-        extern uint8_t rx_byte;  /* remote.c: static → 需改为非 static */
         HAL_UART_Receive_IT(huart, &rx_byte, 1);
+    } else if (huart->Instance == USART2) {
+        __HAL_UART_CLEAR_OREFLAG(huart);
+        huart->ErrorCode = HAL_UART_ERROR_NONE;
+        HAL_UART_Receive_IT(huart, &cli_rx_byte, 1);
+    }
+}
+
+/* USART2=CLI, USART3=遥控 — 统一分发 */
+void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
+{
+    if (huart->Instance == USART2) {
+        cli_rx_byte_cb(cli_rx_byte);
+        HAL_UART_Receive_IT(&huart2, &cli_rx_byte, 1);
+    } else if (huart->Instance == USART3) {
+        remote_uart_rx_callback(rx_byte);
+        HAL_UART_Receive_IT(&huart3, &rx_byte, 1);
     }
 }

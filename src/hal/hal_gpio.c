@@ -55,11 +55,28 @@ static void pin_to_port(int pin, GPIO_TypeDef **port, uint16_t *mask)
     *mask = (uint16_t)(1U << n);
 }
 
+static void gpio_enable_clock(GPIO_TypeDef *port)
+{
+    if (port == GPIOA)      __HAL_RCC_GPIOA_CLK_ENABLE();
+    else if (port == GPIOB) __HAL_RCC_GPIOB_CLK_ENABLE();
+    else if (port == GPIOC) __HAL_RCC_GPIOC_CLK_ENABLE();
+    else if (port == GPIOD) __HAL_RCC_GPIOD_CLK_ENABLE();
+    else if (port == GPIOE) __HAL_RCC_GPIOE_CLK_ENABLE();
+    else if (port == GPIOF) __HAL_RCC_GPIOF_CLK_ENABLE();
+    else if (port == GPIOG) __HAL_RCC_GPIOG_CLK_ENABLE();
+    else if (port == GPIOH) __HAL_RCC_GPIOH_CLK_ENABLE();
+    else if (port == GPIOI) __HAL_RCC_GPIOI_CLK_ENABLE();
+    else if (port == GPIOJ) __HAL_RCC_GPIOJ_CLK_ENABLE();
+    else if (port == GPIOK) __HAL_RCC_GPIOK_CLK_ENABLE();
+}
+
 void hal_gpio_set_mode(int pin, int mode)
 {
     GPIO_TypeDef *port;
     uint16_t mask;
     pin_to_port(pin, &port, &mask);
+
+    gpio_enable_clock(port);
 
     GPIO_InitTypeDef gpio = {0};
     gpio.Pin   = mask;

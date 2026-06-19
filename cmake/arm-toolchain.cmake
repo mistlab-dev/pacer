@@ -26,7 +26,21 @@ if(WIN32)
         message(FATAL_ERROR "arm-none-eabi-gcc not found. Install GNU Arm Embedded Toolchain.")
     endif()
 else()
-    set(ARM_TOOLCHAIN_PREFIX "/usr/bin")
+    set(_ARM_CANDIDATES
+        "/opt/arm-none-eabi/bin"
+        "/usr/bin"
+    )
+    set(ARM_TOOLCHAIN_PREFIX "")
+    foreach(_cand IN LISTS _ARM_CANDIDATES)
+        if(EXISTS "${_cand}/arm-none-eabi-gcc")
+            set(ARM_TOOLCHAIN_PREFIX "${_cand}")
+            set(_ARM_GCC_SUFFIX "")
+            break()
+        endif()
+    endforeach()
+    if(ARM_TOOLCHAIN_PREFIX STREQUAL "")
+        set(ARM_TOOLCHAIN_PREFIX "/usr/bin")
+    endif()
 endif()
 
 if(NOT DEFINED _ARM_GCC_SUFFIX)

@@ -11,6 +11,7 @@
 
 #include "filter/filter.h"
 #include "sensor/imu.h"
+#include "ctrl/attitude.h"
 
 /**
  * @brief 初始化所有子系统
@@ -29,5 +30,8 @@ int  app_run(void);
 const attitude_t   *app_get_attitude(void);
 const imu_sample_t *app_get_imu(void);
 bool app_is_emergency(void);
+bool app_is_armed(void);
+bool app_is_flying(void);
+attitude_ctrl_t   *app_get_att_ctrl(void);
 
 #endif /* PACER_APP_H */
