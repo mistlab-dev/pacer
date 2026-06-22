@@ -74,8 +74,12 @@ static void check_safety(void)
     float tilt = sqrtf(g.attitude.roll * g.attitude.roll +
                        g.attitude.pitch * g.attitude.pitch);
     if (tilt > CFG_QUAD_MAX_TILT_EMERGENCY && g.flying) {
+#if CFG_UART_PLAIN_DEBUG
+        uart_puts("SAFETY EMERGENCY\r\n");
+#else
         printf("[SAFETY] tilt %.1f > %d → EMERGENCY\r\n",
                tilt, CFG_QUAD_MAX_TILT_EMERGENCY);
+#endif
         quad_mixer_stop(&g.mixer);
         motor_stop_all();
         g.emergency = true;
@@ -87,8 +91,12 @@ static void check_safety(void)
     /* 2. 电池低压保护 */
     battery_status_t bat = battery_get_status();
     if (bat == BATTERY_CRITICAL && g.flying) {
+#if CFG_UART_PLAIN_DEBUG
+        uart_puts("SAFETY BATTERY CRITICAL\r\n");
+#else
         printf("[SAFETY] battery %.1fV CRITICAL → auto-land\r\n",
                battery_get_voltage());
+#endif
         g.landing = true;  /* 进入自动降落模式 */
     } else if (bat == BATTERY_WARNING) {
         /* 低压警告: 快闪 LED */
@@ -100,7 +108,11 @@ static void handle_lost_signal(void)
 {
     if (!remote_is_connected()) {
         if (g.flying && !g.landing) {
+#if CFG_UART_PLAIN_DEBUG
+            uart_puts("SAFETY SIGNAL LOST\r\n");
+#else
             printf("[SAFETY] signal lost → auto-land\r\n");
+#endif
             g.landing = true;
         }
     }
@@ -132,7 +144,11 @@ static void update_landing(float dt)
 
     /* 触地: 油门低于阈值 → 停机 */
     if (g.land_throttle <= CFG_LANDING_THROTTLE_MIN) {
+#if CFG_UART_PLAIN_DEBUG
+        uart_puts("APP LANDING COMPLETE\r\n");
+#else
         printf("[APP] landing complete\r\n");
+#endif
         quad_mixer_stop(&g.mixer);
         motor_stop_all();
         g.flying   = false;
@@ -152,12 +168,16 @@ static void ctrl_task(void *arg)
     const TickType_t period = pdMS_TO_TICKS(1000 / CFG_CONTROL_HZ);
 
     while (g.running) {
+#if !CFG_UART_PLAIN_DEBUG
+        watchdog_kick();
+#endif
+
         vTaskDelayUntil(&last, period);
 
-        /* 0. 喂狗 */
-        watchdog_kick();
-
         /* 1. IMU */
+        if (!g.imu_ok) {
+            continue;
+        }
         if (imu_read(&g.imu_sample) != 0) {
             g.imu_ok = false;
             continue;
@@ -254,7 +274,11 @@ static void rx_task(void *arg)
             if (emg_clear_start == 0) {
                 emg_clear_start = HAL_GetTick();
             } else if (HAL_GetTick() - emg_clear_start > 2000) {
+#if CFG_UART_PLAIN_DEBUG
+                uart_puts("APP EMERGENCY CLEARED\r\n");
+#else
                 printf("[APP] emergency cleared\r\n");
+#endif
                 g.emergency = false;
                 g.armed = false;
                 emg_clear_start = 0;
@@ -274,23 +298,47 @@ static void rx_task(void *arg)
             battery_status_t bat = battery_get_status();
             if (bat == BATTERY_CRITICAL) {
                 arm_start = 0;
+#if CFG_UART_PLAIN_DEBUG
+                uart_puts("APP CANNOT ARM BATTERY\r\n");
+#else
                 printf("[APP] cannot arm: battery critical\r\n");
+#endif
             } else {
                 if (arm_start == 0) {
                     arm_start = HAL_GetTick();
                 } else if (HAL_GetTick() - arm_start > (uint32_t)(CFG_ARM_STICK_TIMEOUT_SEC * 1000)) {
                     /* 飞前检查 */
                     if (imu_self_test() != 0) {
+#if CFG_UART_PLAIN_DEBUG
+                        uart_puts("APP CANNOT ARM IMU\r\n");
+#else
                         printf("[APP] cannot arm: IMU self-test failed\r\n");
+#endif
                         arm_start = 0;
                     } else {
-                        printf("[APP] arming...\r\n");
-                        motor_arm();
-                        quad_mixer_arm(&g.mixer);
-                        attitude_init(&g.att_ctrl);
-                        attitude_enable(&g.att_ctrl, true);
-                        g.armed = true;
-                        arm_start = 0;
+                        float tilt = sqrtf(g.attitude.roll * g.attitude.roll +
+                                           g.attitude.pitch * g.attitude.pitch);
+                        if (tilt > CFG_PREFLIGHT_LEVEL_DEG) {
+#if CFG_UART_PLAIN_DEBUG
+                            uart_puts("APP CANNOT ARM TILT\r\n");
+#else
+                            printf("[APP] cannot arm: tilt %.1f > %.1f deg\r\n",
+                                   tilt, CFG_PREFLIGHT_LEVEL_DEG);
+#endif
+                            arm_start = 0;
+                        } else {
+#if CFG_UART_PLAIN_DEBUG
+                            uart_puts("APP ARMING\r\n");
+#else
+                            printf("[APP] arming...\r\n");
+#endif
+                            motor_arm();
+                            quad_mixer_arm(&g.mixer);
+                            attitude_init(&g.att_ctrl);
+                            attitude_enable(&g.att_ctrl, true);
+                            g.armed = true;
+                            arm_start = 0;
+                        }
                     }
                 }
             }
@@ -302,7 +350,11 @@ static void rx_task(void *arg)
         if (g.armed && !g.flying &&
             rc_new.throttle < 0.05f &&
             rc_new.yaw > 0.9f) {
+#if CFG_UART_PLAIN_DEBUG
+            uart_puts("APP DISARMING\r\n");
+#else
             printf("[APP] disarming\r\n");
+#endif
             quad_mixer_disarm(&g.mixer);
             motor_disarm();
             g.armed = false;
@@ -311,7 +363,11 @@ static void rx_task(void *arg)
         /* 起飞: 油门>30% 且已解锁 */
         if (g.armed && !g.flying && !g.landing &&
             rc_new.throttle > 0.3f) {
+#if CFG_UART_PLAIN_DEBUG
+            uart_puts("APP TAKEOFF\r\n");
+#else
             printf("[APP] takeoff!\r\n");
+#endif
             g.flying          = true;
             g.takeoff_throttle = 0.0f;  /* 从 0 开始渐变 */
         }
@@ -319,7 +375,11 @@ static void rx_task(void *arg)
         /* 降落: 油门<10% 且在飞 → 进入自动降落 */
         if (g.flying && !g.landing &&
             rc_new.throttle < 0.1f) {
+#if CFG_UART_PLAIN_DEBUG
+            uart_puts("APP LANDING\r\n");
+#else
             printf("[APP] landing...\r\n");
+#endif
             g.landing       = true;
             g.land_throttle = CFG_HOVER_THROTTLE;  /* 从悬停开始降 */
         }
@@ -331,18 +391,30 @@ static void rx_task(void *arg)
     vTaskDelete(NULL);
 }
 
-/* ================ 遥测任务 (10Hz) ================ */
+/* ================ 遥测任务 (1Hz 固定字符串) ================ */
 
 static void telem_task(void *arg)
 {
     (void)arg;
 
-    while (g.running) {
-        vTaskDelay(pdMS_TO_TICKS(100));
+#if CFG_UART_PLAIN_DEBUG
+    uart_puts("PACER TELEM START\r\n");
+#endif
 
-        /* LED + 电池更新 (10Hz) */
+    while (g.running) {
+#if CFG_UART_PLAIN_DEBUG
+        uart_puts("PACER ALIVE\r\n");
+#endif
+#if !CFG_UART_PLAIN_DEBUG
+        watchdog_kick();
+#endif
+
+        vTaskDelay(pdMS_TO_TICKS(1000));
+
         led_tick();
+#if !CFG_UART_PLAIN_DEBUG
         battery_update();
+#endif
 
         /* LED 状态切换 */
         if (g.emergency) {
@@ -355,6 +427,9 @@ static void telem_task(void *arg)
             led_set_state(LED_BLINK_SLOW);
         }
 
+#if CFG_UART_PLAIN_DEBUG
+        uart_puts("PACER ALIVE\r\n");
+#else
         printf("[T] %s%s%s | R:%.1f P:%.1f Y:%.1f | thr:%.2f rc:%d | bat:%.1fV\r\n",
                g.armed ? "ARM" : "DIS",
                g.flying ? "+FLY" : "",
@@ -363,10 +438,105 @@ static void telem_task(void *arg)
                g.rc.throttle,
                remote_is_connected(),
                battery_get_voltage());
+#endif
     }
 
     vTaskDelete(NULL);
 }
+
+#if CFG_UART_PLAIN_DEBUG && (CFG_IMU_DEBUG || CFG_REMOTE_DEBUG)
+
+static void imu_debug_print_bias(void)
+{
+    vec3_t bias;
+    char buf[96];
+
+    imu_get_gyro_bias(&bias);
+    snprintf(buf, sizeof(buf),
+             "PACER IMU BIAS gx=%.3f gy=%.3f gz=%.3f\r\n",
+             bias.x, bias.y, bias.z);
+    uart_puts(buf);
+}
+
+static void imu_debug_print_sample(const imu_sample_t *s, const attitude_t *att)
+{
+    char buf[160];
+
+    snprintf(buf, sizeof(buf),
+             "PACER IMU ax=%.2f ay=%.2f az=%.2f "
+             "gx=%.3f gy=%.3f gz=%.3f "
+             "roll=%.1f pitch=%.1f yaw=%.1f T=%.1f\r\n",
+             s->accel.x, s->accel.y, s->accel.z,
+             s->gyro.x, s->gyro.y, s->gyro.z,
+             att->roll, att->pitch, att->yaw,
+             s->temperature);
+    uart_puts(buf);
+}
+
+static void remote_debug_print_status(void)
+{
+    remote_cmd_t cmd;
+    remote_stats_t st;
+    char buf[128];
+
+    remote_get_cmd(&cmd);
+    remote_get_stats(&st);
+    snprintf(buf, sizeof(buf),
+             "PACER REMOTE T=%.2f R=%.2f P=%.2f Y=%.2f "
+             "conn=%d frames=%lu drops=%lu\r\n",
+             cmd.throttle, cmd.roll, cmd.pitch, cmd.yaw,
+             st.connected ? 1 : 0,
+             (unsigned long)st.frame_count,
+             (unsigned long)st.drop_count);
+    uart_puts(buf);
+}
+
+static void link_debug_run_loop(void)
+{
+    const uint32_t imu_hz = CFG_IMU_DEBUG ? (uint32_t)CFG_IMU_DEBUG_HZ : 0U;
+    const uint32_t rc_hz  = CFG_REMOTE_DEBUG ? (uint32_t)CFG_REMOTE_DEBUG_HZ : 0U;
+    const uint32_t loop_hz = (imu_hz > rc_hz) ? imu_hz : rc_hz;
+    const uint32_t delay_ms = (loop_hz > 0U) ? (1000U / loop_hz) : 100U;
+    const float dt = 1.0f / (float)loop_hz;
+    uint32_t imu_tick = 0;
+    uint32_t rc_tick  = 0;
+    uint32_t err_count = 0;
+
+    uart_puts("PACER LINK DEBUG ON\r\n");
+    while (g.running) {
+        imu_tick++;
+        rc_tick++;
+
+#if CFG_IMU_DEBUG
+        if (g.imu_ok && (imu_hz == 0U || (imu_tick % (loop_hz / imu_hz)) == 0U)) {
+            if (imu_read(&g.imu_sample) != 0) {
+                err_count++;
+                if ((err_count % loop_hz) == 1U) {
+                    uart_puts("PACER IMU READ ERR\r\n");
+                }
+            } else {
+                g.attitude = filter_update(&g.imu_sample, dt);
+                imu_debug_print_sample(&g.imu_sample, &g.attitude);
+            }
+        }
+#endif
+
+#if CFG_REMOTE_DEBUG
+        if (rc_hz == 0U || (rc_tick % (loop_hz / rc_hz)) == 0U) {
+            remote_cmd_t rc_new;
+            if (remote_poll(&rc_new) == 0) {
+                g.rc = rc_new;
+                g.last_rc_ms = HAL_GetTick();
+            }
+            remote_debug_print_status();
+        }
+#endif
+
+        HAL_Delay(delay_ms);
+    }
+}
+
+#endif /* CFG_UART_PLAIN_DEBUG && (CFG_IMU_DEBUG || CFG_REMOTE_DEBUG) */
 
 /* ================ 公开接口 ================ */
 
@@ -377,7 +547,11 @@ int app_init(void)
     /* HAL 基础 */
     hal_gpio_init();
     usart_printf_init();
+#if CFG_UART_PLAIN_DEBUG
+    uart_puts("PACER INIT START\r\n");
+#else
     printf("\r\n=== PACER v3.0 (STM32H743) ===\r\n");
+#endif
 
     /* I2C1 总线 (IMU 用) */
     hal_i2c1_init();
@@ -386,12 +560,11 @@ int app_init(void)
     led_init();
     led_set_state(LED_BREATH);  /* 校准中 */
 
-    /* Timer PWM (电机) */
+#if !CFG_UART_PLAIN_DEBUG
     hal_tim_pwm_init();
     motor_init();
-
-    /* 电池 ADC */
     battery_init();
+#endif
 
     /* IMU */
     imu_icm20948_register();
@@ -404,11 +577,26 @@ int app_init(void)
     };
     g.imu_ok = false;
     if (imu_init(&imu_cfg) != 0) {
+#if CFG_UART_PLAIN_DEBUG
+        uart_puts("PACER NO IMU\r\n");
+#else
         printf("[APP] IMU init FAILED (no sensor?) — running without IMU\r\n");
+#endif
     } else {
+#if CFG_UART_PLAIN_DEBUG
+        uart_puts("PACER IMU CALIBRATE\r\n");
+#else
         printf("[APP] calibrating gyro...\r\n");
+#endif
         imu_calibrate_gyro(500);
         g.imu_ok = true;
+#if CFG_UART_PLAIN_DEBUG && CFG_IMU_DEBUG
+        if (imu_self_test() == 0) {
+            uart_puts("PACER IMU ID OK\r\n");
+        }
+        uart_puts("PACER IMU CAL DONE\r\n");
+        imu_debug_print_bias();
+#endif
     }
 
     /* 滤波器 */
@@ -430,22 +618,35 @@ int app_init(void)
     mixer_config_t mcfg = MIXER_CONFIG_DEFAULT;
     quad_mixer_init(&g.mixer, &mcfg);
 
-    /* 遥控 */
+    /* 遥控 — 飞控模式或联调遥控模式启用 USART3 */
+#if !CFG_UART_PLAIN_DEBUG || CFG_REMOTE_DEBUG
     remote_init();
+#if CFG_UART_PLAIN_DEBUG && CFG_REMOTE_DEBUG
+    uart_puts("PACER REMOTE READY\r\n");
+#endif
+#endif
 
-    /* CLI (USART2 在线调参) */
+    /* CLI (排查串口阶段先关闭，避免 printf 干扰) */
+#if !CFG_UART_PLAIN_DEBUG
     cli_init();
+#endif
 
     g.running   = true;
     g.armed     = false;
     g.flying    = false;
     g.emergency = false;
 
+#if CFG_UART_PLAIN_DEBUG
+    uart_puts("PACER INIT OK\r\n");
+#else
     printf("[APP] init OK, ready to arm (throttle 0 + yaw left)\r\n");
+#endif
     led_set_state(LED_BLINK_SLOW);  /* idle */
 
-    /* 初始化完成后再启动看门狗，避免校准阶段超时复位 */
+    /* 空板联调阶段暂不启 IWDG，避免阻塞外设导致反复复位 */
+#if !CFG_UART_PLAIN_DEBUG
     watchdog_init(CFG_WATCHDOG_TIMEOUT_MS);
+#endif
 
     return 0;
 }
@@ -456,13 +657,33 @@ void app_deinit(void)
     motor_stop_all();
     motor_disarm();
     imu_deinit();
+#if !CFG_UART_PLAIN_DEBUG || CFG_REMOTE_DEBUG
     remote_deinit();
+#endif
     led_set_state(LED_OFF);
+#if CFG_UART_PLAIN_DEBUG
+    uart_puts("PACER SHUTDOWN\r\n");
+#else
     printf("[APP] shutdown\r\n");
+#endif
 }
 
 int app_run(void)
 {
+#if CFG_UART_PLAIN_DEBUG
+    uart_puts("PACER RUN\r\n");
+#if CFG_IMU_DEBUG || CFG_REMOTE_DEBUG
+    link_debug_run_loop();
+#else
+    while (g.running) {
+        uart_puts("PACER ALIVE\r\n");
+        for (volatile uint32_t d = 0; d < 25600000U; d++) {
+            __NOP();
+        }
+    }
+#endif
+    return 0;
+#else
     BaseType_t ret;
 
     ret = xTaskCreate(ctrl_task, "ctrl",
@@ -489,6 +710,7 @@ int app_run(void)
 fail:
     printf("[APP] task creation failed\r\n");
     return -1;
+#endif
 }
 
 const attitude_t *app_get_attitude(void) { return &g.attitude; }

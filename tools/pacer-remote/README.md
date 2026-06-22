@@ -1,21 +1,22 @@
 # PACER 遥控上位机
 
-Go 串口遥控工具，发送控制命令到 STM32H743 飞控。
+Go 串口遥控工具，发送 19 字节帧到 STM32 USART3 或 **地面 ESP32**（ESP-NOW 桥）。
 
 ## 协议
 
-18 字节帧，小端序：
+19 字节帧，小端序：
 
 ```
-[0xAA] [0x55] [throttle:4] [roll:4] [pitch:4] [yaw:4]
+[0xAA] [0x55] [throttle:4] [roll:4] [pitch:4] [yaw:4] [xor:1]
 ```
 
 | 字段 | 类型 | 范围 | 说明 |
 |------|------|------|------|
-| throttle | float32 | 0~1 | 油门，0=停，1=满 |
+| throttle | float32 | 0~1 | 油门 |
 | roll | float32 | -1~+1 | 滚转，左负右正 |
 | pitch | float32 | -1~+1 | 俯仰，前负后正 |
 | yaw | float32 | -1~+1 | 偏航，左负右正 |
+| xor | uint8 | — | 前 18 字节异或 |
 
 ## 编译
 
@@ -24,60 +25,40 @@ cd tools/pacer-remote
 go build -o pacer-remote .
 ```
 
-Windows 下生成 `pacer-remote.exe`。
+Windows 生成 `pacer-remote.exe`。
+
+无 Go 环境可用 Python 替代：`python scripts/remote_send.py --port COMx --demo`
 
 ## 使用
 
 ```bash
-# 基本用法
-pacer-remote -port COM3 -baud 115200
+# ESP-NOW 地面端 USB 口
+pacer-remote -port COM6 -demo
 
-# 设置初始值
-pacer-remote -port COM3 -t 0.5 -r 0.1 -p -0.1 -y 0
+# 交互式（默认开启）
+pacer-remote -port COM6
+# 输入: t+ t- r+ p+ y+ z(归零) s(状态) q(退出)
 
-# Demo 模式 (自动摇摆)
-pacer-remote -port COM3 -demo
+# 固定值、关闭交互
+pacer-remote -port COM6 -t 0 -r 0.2 -i=false
 
-# Linux
-pacer-remote -port /dev/ttyUSB0 -t 0.3
+# 直连飞控 USART3（少见，一般经 ESP）
+pacer-remote -port COM5 -baud 115200
 ```
 
 ## 参数
 
 | 参数 | 默认值 | 说明 |
 |------|--------|------|
-| `-port` | 必填 | 串口设备名 |
+| `-port` | 必填 | 串口（地面 ESP 的 COM） |
 | `-baud` | 115200 | 波特率 |
 | `-freq` | 50 | 发送频率 Hz |
-| `-t` | 0 | 初始油门 |
-| `-r` | 0 | 初始滚转 |
-| `-p` | 0 | 初始俯仰 |
-| `-y` | 0 | 初始偏航 |
-| `-demo` | false | 演示模式 |
+| `-t/-r/-p/-y` | 0 | 初始通道值 |
+| `-demo` | false | 演示波形 |
+| `-i` | true | 交互式 stdin 命令 |
 
-## Demo 模式
+## 安全
 
-自动执行周期性摇摆动作：
-
-- 油门固定 0.5
-- 滚转 ±0.3 周期摆动
-- 俯仰 ±0.2 周期摆动
-
-用于测试飞控响应，**请确保电机已正确安装且有安全防护**。
-
-## 交互式控制
-
-当前版本只支持 Ctrl+C 退出。完整键盘控制需要额外依赖：
-
-```bash
-go get golang.org/x/term
-```
-
-后续版本可扩展为 WASD 键盘实时控制。
-
-## 注意
-
-- 启动前确保飞控已上电、串口已连接
-- 退出时会自动发送归零命令
-- Demo 模式下 Ctrl+C 会先归零再退出
-- **安全第一**: 首次测试建议拆掉电机螺旋桨
+- 首次测试拆桨
+- 退出时自动发归零帧
+- Demo 模式油门为 0，仅姿态通道摆动

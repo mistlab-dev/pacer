@@ -6,8 +6,8 @@
  * 50Hz, 1000~2000μs 脉宽
  *
  * 时钟链:
- *   H743 APB2 Timer = 240MHz
- *   预分频 240-1 → 计数频率 1MHz (1μs/tick)
+ *   PCLK2 64MHz → TIM1 内核 128MHz
+ *   预分频 128-1 → 计数频率 1MHz (1μs/tick)
  *   ARR 20000-1 → 周期 20ms = 50Hz
  */
 
@@ -62,7 +62,7 @@ static void tim1_base_config(void)
     __HAL_RCC_TIM1_CLK_ENABLE();
 
     htim1.Instance               = TIM1;
-    htim1.Init.Prescaler         = CFG_ESC_PWM_PRESCALER;    /* 240-1 → 1MHz */
+    htim1.Init.Prescaler         = CFG_ESC_PWM_PRESCALER;    /* 128-1 → 1MHz */
     htim1.Init.CounterMode       = TIM_COUNTERMODE_UP;
     htim1.Init.Period            = CFG_ESC_PWM_PERIOD - 1;   /* 20000-1 → 50Hz */
     htim1.Init.ClockDivision     = TIM_CLOCKDIVISION_DIV1;

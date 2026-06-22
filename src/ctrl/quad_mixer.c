@@ -10,6 +10,7 @@
  */
 
 #include "ctrl/quad_mixer.h"
+#include "app/config.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -27,10 +28,12 @@ int quad_mixer_init(quad_mixer_t *m, const mixer_config_t *cfg)
     m->armed  = false;
     m->enabled = false;
 
+#if !CFG_UART_PLAIN_DEBUG
     printf("[MIXER] init hover=%.0f%% range=[%.0f%%, %.0f%%]\n",
            m->cfg.throttle_hover * 100.0f,
            m->cfg.throttle_min * 100.0f,
            m->cfg.throttle_max * 100.0f);
+#endif
     return 0;
 }
 
@@ -38,14 +41,18 @@ void quad_mixer_arm(quad_mixer_t *m)
 {
     m->armed  = true;
     m->enabled = true;
+#if !CFG_UART_PLAIN_DEBUG
     printf("[MIXER] ARMED\n");
+#endif
 }
 
 void quad_mixer_disarm(quad_mixer_t *m)
 {
     m->armed  = false;
     m->enabled = false;
+#if !CFG_UART_PLAIN_DEBUG
     printf("[MIXER] DISARMED\n");
+#endif
 }
 
 mixer_output_t quad_mixer_update(quad_mixer_t *m,
@@ -85,14 +92,18 @@ mixer_output_t quad_mixer_update(quad_mixer_t *m,
 void quad_mixer_stop(quad_mixer_t *m)
 {
     m->enabled = false;
+#if !CFG_UART_PLAIN_DEBUG
     printf("[MIXER] STOP\n");
+#endif
 }
 
 void quad_mixer_deinit(quad_mixer_t *m)
 {
     m->armed  = false;
     m->enabled = false;
+#if !CFG_UART_PLAIN_DEBUG
     printf("[MIXER] deinit\n");
+#endif
 }
 
 bool quad_mixer_is_armed(const quad_mixer_t *m)

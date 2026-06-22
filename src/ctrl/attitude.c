@@ -76,12 +76,14 @@ void attitude_init(attitude_ctrl_t *ac)
     ac->mode    = ATT_MODE_RATE;
     ac->enabled = false;
 
+#if !CFG_UART_PLAIN_DEBUG
     printf("[ATTITUDE] init mode=%s\n",
            ac->mode == ATT_MODE_RATE ? "RATE" : "ANGLE");
     printf("  rate: roll(%.2f,%.3f,%.2f) pitch(%.2f,%.3f,%.2f) yaw(%.2f,%.3f,%.2f)\n",
            CFG_QUAD_ROLL_RATE_KP, CFG_QUAD_ROLL_RATE_KI, CFG_QUAD_ROLL_RATE_KD,
            CFG_QUAD_PITCH_RATE_KP, CFG_QUAD_PITCH_RATE_KI, CFG_QUAD_PITCH_RATE_KD,
            CFG_QUAD_YAW_RATE_KP, CFG_QUAD_YAW_RATE_KI, CFG_QUAD_YAW_RATE_KD);
+#endif
 }
 
 const attitude_output_t *attitude_update(attitude_ctrl_t *ac,
@@ -171,7 +173,9 @@ void attitude_set_mode(attitude_ctrl_t *ac, att_mode_t mode)
         pid_reset(&ac->pid_pitch_rate);
         pid_reset(&ac->pid_yaw_rate);
         ac->mode = mode;
+#if !CFG_UART_PLAIN_DEBUG
         printf("[ATTITUDE] mode=%s\n", mode == ATT_MODE_RATE ? "RATE" : "ANGLE");
+#endif
     }
 }
 
@@ -187,13 +191,17 @@ void attitude_enable(attitude_ctrl_t *ac, bool on)
         ac->output.roll     = 0.0f;
         ac->output.pitch    = 0.0f;
         ac->output.yaw      = 0.0f;
+#if !CFG_UART_PLAIN_DEBUG
         printf("[ATTITUDE] enabled\n");
+#endif
     } else if (!on && ac->enabled) {
         ac->output.throttle = 0.0f;
         ac->output.roll     = 0.0f;
         ac->output.pitch    = 0.0f;
         ac->output.yaw      = 0.0f;
+#if !CFG_UART_PLAIN_DEBUG
         printf("[ATTITUDE] disabled\n");
+#endif
     }
     ac->enabled = on;
 }

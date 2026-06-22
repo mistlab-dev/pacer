@@ -3,15 +3,15 @@
  * @brief PACER 四旋翼飞控入口 — STM32H743
  *
  * 硬件:
- *   MCU:     STM32H743VI @ 480MHz
+ *   MCU:     STM32H743VI @ 256MHz (APB 64MHz)
  *   IMU:     ICM20948 (I2C1, PB6/PB7)
  *   ESC PWM: TIM1 CH1~4 (PA8, PE11, PE13, PE14)
  *   遥控:    USART3 (PD8/PD9)
- *   调试:    USART2 (PA2/PA3)
+ *   调试:    USART1 (PA9/PA10)，鹿小班 CH347 UART0 → COM3，105600 baud
  *
  * 启动流程:
  *   1. HAL_Init() — systick, NVIC
- *   2. SystemClock_Config() — 480MHz
+ *   2. SystemClock_Config() — 256MHz, APB 64MHz
  *   3. app_init() — 外设 + 传感器 + 控制器
  *   4. app_run()  — FreeRTOS 调度器 (不返回)
  */
@@ -20,11 +20,12 @@
 #include "app/app.h"
 #include "hal/led.h"
 #include "usart_printf.h"
+#include "app/config.h"
 #include "FreeRTOS.h"
 #include "task.h"
 #include <stdio.h>
 
-/* ================ 系统时钟 480MHz ================ */
+/* ================ 系统时钟 256MHz / APB 64MHz ================ */
 
 void SystemClock_Config(void)
 {
@@ -37,17 +38,17 @@ void SystemClock_Config(void)
     osc.LSIState       = RCC_LSI_ON;
     osc.PLL.PLLState   = RCC_PLL_ON;
     osc.PLL.PLLSource  = RCC_PLLSOURCE_HSI;
-    osc.PLL.PLLM       = 4;   /* HSI=64MHz / 4 = 16MHz */
-    osc.PLL.PLLN       = 60;  /* 16MHz * 60 = 960MHz VCO (H743 max) */
-    osc.PLL.PLLP       = 2;   /* 960 / 2 = 480MHz SYS ✓ */
-    osc.PLL.PLLQ       = 15;  /* USB 48MHz */
+    osc.PLL.PLLM       = 4;   /* HSI 64MHz / 4 = 16MHz */
+    osc.PLL.PLLN       = 32;  /* 16MHz * 32 = 512MHz VCO */
+    osc.PLL.PLLP       = 2;   /* 512 / 2 = 256MHz SYSCLK */
+    osc.PLL.PLLQ       = 10;  /* 512 / 10 = 51.2MHz (USB 近似，换 HSE 后可精调 48MHz) */
     osc.PLL.PLLR       = 2;
 
     if (HAL_RCC_OscConfig(&osc) != HAL_OK) {
         while (1) { /* 死循环 */ }
     }
 
-    /* CPU 480MHz, AXI 240MHz, APB1 120MHz, APB2 240MHz */
+    /* SYSCLK 256MHz, HCLK 128MHz, APB1/2/3/4 64MHz */
     clk.ClockType = RCC_CLOCKTYPE_HCLK  |
                     RCC_CLOCKTYPE_SYSCLK |
                     RCC_CLOCKTYPE_PCLK1  |
@@ -55,16 +56,18 @@ void SystemClock_Config(void)
                     RCC_CLOCKTYPE_D3PCLK1 |
                     RCC_CLOCKTYPE_D1PCLK1;
     clk.SYSCLKSource   = RCC_SYSCLKSOURCE_PLLCLK;
-    clk.SYSCLKDivider  = RCC_SYSCLK_DIV1;     /* 480MHz */
-    clk.AHBCLKDivider  = RCC_HCLK_DIV2;       /* 240MHz AXI */
-    clk.APB1CLKDivider = RCC_APB1_DIV2;       /* 120MHz */
-    clk.APB2CLKDivider = RCC_APB2_DIV2;       /* 240MHz */
-    clk.APB3CLKDivider = RCC_APB3_DIV2;       /* 120MHz */
-    clk.APB4CLKDivider = RCC_APB4_DIV2;       /* 120MHz */
+    clk.SYSCLKDivider  = RCC_SYSCLK_DIV1;     /* 256MHz */
+    clk.AHBCLKDivider  = RCC_HCLK_DIV2;       /* 128MHz */
+    clk.APB1CLKDivider = RCC_APB1_DIV2;     /* 64MHz */
+    clk.APB2CLKDivider = RCC_APB2_DIV2;     /* 64MHz */
+    clk.APB3CLKDivider = RCC_APB3_DIV2;     /* 64MHz */
+    clk.APB4CLKDivider = RCC_APB4_DIV2;     /* 64MHz */
 
-    if (HAL_RCC_ClockConfig(&clk, FLASH_LATENCY_4) != HAL_OK) {
+    if (HAL_RCC_ClockConfig(&clk, FLASH_LATENCY_2) != HAL_OK) {
         while (1) { }
     }
+
+    SystemCoreClockUpdate();
 }
 
 /* ================ main ================ */
@@ -77,7 +80,11 @@ int main(void)
 
     /* 2. 应用初始化 */
     if (app_init() != 0) {
+#if CFG_UART_PLAIN_DEBUG
+        uart_puts("PACER MAIN INIT FAIL\r\n");
+#else
         printf("[MAIN] init failed!\r\n");
+#endif
         while (1) {
             HAL_Delay(500);
             led_tick();
@@ -95,6 +102,10 @@ int main(void)
 
 void Error_Handler(void)
 {
+#if CFG_UART_PLAIN_DEBUG
+    uart_puts("PACER FATAL ERROR\r\n");
+#else
     printf("[FATAL] HAL Error\r\n");
+#endif
     while (1) { }
 }

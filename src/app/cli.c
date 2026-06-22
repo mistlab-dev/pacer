@@ -14,6 +14,7 @@
 #include "sensor/imu.h"
 #include "hal/led.h"
 #include "hal/battery.h"
+#include "remote/remote.h"
 #include "usart_printf.h"
 #include "stm32h7xx_hal.h"
 
@@ -78,18 +79,28 @@ static void cmd_help(void)
 static void cmd_status(void)
 {
     const attitude_t *att = app_get_attitude();
+    remote_stats_t rcst;
+    remote_cmd_t rc;
+    remote_get_stats(&rcst);
+    remote_get_cmd(&rc);
 
     printf(
         "\r\n"
         "=== PACER Status ===\r\n"
         "  State:   %s%s%s\r\n"
         "  Attitude: R=%.2f P=%.2f Y=%.2f\r\n"
+        "  Remote:  %s T=%.2f R=%.2f P=%.2f Y=%.2f\r\n"
+        "  RC stat: frames=%lu drops=%lu\r\n"
         "  Battery:  %.2fV (%s)\r\n"
         "  Uptime:   %lu ms\r\n",
         app_is_armed() ? "ARMED" : "DISARMED",
         app_is_flying() ? " FLYING" : "",
         app_is_emergency() ? " EMERGENCY" : "",
         att->roll, att->pitch, att->yaw,
+        rcst.connected ? "LINK" : "LOST",
+        rc.throttle, rc.roll, rc.pitch, rc.yaw,
+        (unsigned long)rcst.frame_count,
+        (unsigned long)rcst.drop_count,
         battery_get_voltage(),
         battery_get_status() == BATTERY_OK ? "OK" :
         battery_get_status() == BATTERY_WARNING ? "WARN" : "CRIT",
@@ -271,7 +282,6 @@ void cli_init(void)
     printf("\r\n=== PACER CLI ready (type 'help') ===\r\n");
     cli_prompt();
 
-    HAL_NVIC_SetPriority(USART2_IRQn, 7, 0);
-    HAL_NVIC_EnableIRQ(USART2_IRQn);
+    usart_debug_nvic_enable();
     HAL_UART_Receive_IT(&huart2, &cli_rx_byte, 1);
 }

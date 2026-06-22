@@ -19,7 +19,7 @@
 
 #include <string.h>
 
-#if CFG_ENABLE_CONSOLE_LOG
+#if CFG_ENABLE_CONSOLE_LOG && !CFG_UART_PLAIN_DEBUG
 #include "usart_printf.h"
 #define LOG(fmt, ...)  printf(fmt, ##__VA_ARGS__)
 #else

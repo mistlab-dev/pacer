@@ -34,6 +34,7 @@ add_link_options(
     -mfloat-abi=hard
     -T${CMAKE_SOURCE_DIR}/cmake/stm32h743vi_flash.ld
     -Wl,--gc-sections
+    -Wl,-u,_printf_float
     -Wl,-Map=${CMAKE_BINARY_DIR}/pacer.map
 )
 

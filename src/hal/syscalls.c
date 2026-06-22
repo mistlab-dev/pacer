@@ -6,9 +6,7 @@
 #include <errno.h>
 #include <sys/stat.h>
 #include <stdint.h>
-#include "stm32h7xx_hal.h"
-
-extern UART_HandleTypeDef huart2;
+#include "usart_printf.h"
 
 int errno;
 
@@ -55,7 +53,7 @@ int _write(int fd, const char *ptr, int len)
 {
     (void)fd;
     if (ptr && len > 0) {
-        HAL_UART_Transmit(&huart2, (const uint8_t *)ptr, (uint16_t)len, 100);
+        uart_write_bytes((const uint8_t *)ptr, (uint16_t)len);
     }
     return len;
 }

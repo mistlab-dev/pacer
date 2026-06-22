@@ -21,7 +21,7 @@
 #include "task.h"
 #include <string.h>
 
-#if CFG_ENABLE_CONSOLE_LOG
+#if CFG_ENABLE_CONSOLE_LOG && !CFG_UART_PLAIN_DEBUG
 #include "usart_printf.h"
 #define LOG(fmt, ...)  printf(fmt, ##__VA_ARGS__)
 #else
@@ -201,10 +201,28 @@ int remote_poll(remote_cmd_t *out)
 bool remote_is_connected(void)
 {
     uint32_t elapsed = (HAL_GetTick() - g.last_rx_ms);
-    return g.connected && (elapsed < (uint32_t)(CFG_REMOTE_TIMEOUT_SEC * 1000));
+    uint32_t timeout_ms = (uint32_t)(CFG_NO_SIGNAL_TIMEOUT_SEC * 1000.0f);
+    return g.connected && (elapsed < timeout_ms);
 }
 
 void remote_disconnect(void)
 {
     g.connected = false;
+}
+
+void remote_get_cmd(remote_cmd_t *out)
+{
+    taskENTER_CRITICAL();
+    *out = g.cmd;
+    taskEXIT_CRITICAL();
+}
+
+void remote_get_stats(remote_stats_t *out)
+{
+    taskENTER_CRITICAL();
+    out->frame_count = g.frame_count;
+    out->drop_count  = g.drop_count;
+    out->last_rx_ms  = g.last_rx_ms;
+    out->connected   = remote_is_connected();
+    taskEXIT_CRITICAL();
 }

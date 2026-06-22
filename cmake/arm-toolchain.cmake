@@ -67,7 +67,7 @@ set(CMAKE_C_FLAGS_INIT "${CPU_PARAMETERS} -Wall -Wextra -Wno-unused-parameter")
 set(CMAKE_C_FLAGS_DEBUG_INIT "-g3 -O0")
 set(CMAKE_C_FLAGS_RELEASE_INIT "-Os -DNDEBUG")
 
-set(CMAKE_EXE_LINKER_FLAGS_INIT "${CPU_PARAMETERS} -specs=nano.specs -specs=nosys.specs -Wl,--gc-sections")
+set(CMAKE_EXE_LINKER_FLAGS_INIT "${CPU_PARAMETERS} -specs=nano.specs -specs=nosys.specs -Wl,--gc-sections -Wl,-u,_printf_float")
 
 set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)
 set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY ONLY)

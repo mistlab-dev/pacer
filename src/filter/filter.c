@@ -6,6 +6,7 @@
  */
 
 #include "filter/filter.h"
+#include "app/config.h"
 #include <math.h>
 #include <string.h>
 #include <stdio.h>
@@ -156,8 +157,11 @@ int filter_init(const filter_config_t *cfg)
     g.comp_roll = g.comp_pitch = g.comp_yaw = 0.0f;
 
     const char *name = (cfg->type == FILTER_MADGWICK) ? "Madgwick" : "Complementary";
+#if !CFG_UART_PLAIN_DEBUG
     printf("[FILTER] %s init (alpha=%.2f, beta=%.3f)\n",
            name, cfg->alpha, cfg->beta);
+#endif
+    (void)name;
     return 0;
 }
 

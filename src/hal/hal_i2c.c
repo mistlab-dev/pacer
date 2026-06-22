@@ -19,7 +19,7 @@ I2C_HandleTypeDef hi2c1;
 void hal_i2c1_init(void)
 {
     hi2c1.Instance              = I2C1;
-    hi2c1.Init.Timing           = 0x10C15B88;  /* 400kHz Fast-mode, APB1=120MHz */
+    hi2c1.Init.Timing           = 0x00C04E6E;  /* 400kHz Fast-mode, PCLK1=64MHz */
     hi2c1.Init.OwnAddress1      = 0;
     hi2c1.Init.AddressingMode   = I2C_ADDRESSINGMODE_7BIT;
     hi2c1.Init.DualAddressMode  = I2C_DUALADDRESS_DISABLE;

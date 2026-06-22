@@ -1,0 +1,20 @@
+/**
+ * @file mac_config.h.example
+ * @brief ESP-NOW 对端 MAC 配置模板
+ *
+ * 用法:
+ *   1. 复制本文件为 mac_config.h（air/ 与 ground/ 各一份，或共用上级目录）
+ *   2. 先烧录一端，串口监视器查看 MAC 地址
+ *   3. 填入对端 MAC 后重新烧录
+ */
+
+#ifndef PACER_MAC_CONFIG_H
+#define PACER_MAC_CONFIG_H
+
+/* 机载 ESP32 的 MAC — 填 ground.ino 的 airMac[] */
+#define PACER_AIR_MAC    {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}
+
+/* 地面 ESP32 的 MAC — 填 air.ino 的 groundMac[] */
+#define PACER_GROUND_MAC {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}
+
+#endif /* PACER_MAC_CONFIG_H */

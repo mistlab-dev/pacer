@@ -12,7 +12,7 @@
 
 #define TARGET_STM32H743        1
 #define TARGET_MCU              "STM32H743"
-#define SYS_CLOCK_HZ            480000000U   /* H743 480MHz */
+#define SYS_CLOCK_HZ            256000000U   /* HSI+PLL 256MHz, APB 64MHz */
 
 /* ==================== IMU ==================== */
 
@@ -32,14 +32,14 @@
 /*
  * H743 Timer PWM 配置:
  *   ESC 输出 50Hz, 1000~2000μs 脉宽
- *   Timer 时钟 = 240MHz (APB2 / 2)
- *   预分频 = 240-1 → 计数频率 1MHz (1μs/tick)
+ *   Timer 时钟 = 128MHz (PCLK2 64MHz × 2)
+ *   预分频 = 128-1 → 计数频率 1MHz (1μs/tick)
  *   自动重载 = 20000-1 → 周期 20ms = 50Hz
  *
  *   脉宽映射: 1000~2000 ticks = 1000~2000μs
  */
 #define CFG_ESC_PWM_FREQ_HZ       50
-#define CFG_ESC_PWM_PRESCALER     239     /* 240MHz / 240 = 1MHz */
+#define CFG_ESC_PWM_PRESCALER     127     /* 128MHz / 128 = 1MHz */
 #define CFG_ESC_PWM_PERIOD        20000   /* 20ms = 50Hz */
 #define CFG_ESC_PULSE_MIN         1000    /* 1ms = 最低油门/停止 */
 #define CFG_ESC_PULSE_MAX         2000    /* 2ms = 最大油门 */
@@ -115,10 +115,32 @@
 #define CFG_REMOTE_UART_BAUD       115200
 #define CFG_REMOTE_TIMEOUT_SEC     0.5f
 
+/* ==================== 调试串口 (CLI / printf) ==================== */
+
+/*
+ * 鹿小班等板载 CH347「UART0」→ USART1 (PA9/PA10)。
+ * 外接 USB-TTL 时改为 PACER_DEBUG_USART2 (PA2/PA3)。
+ *
+ * 波特率：固件保持 115200；HSI 时钟偏差使线速约 105600，PC 串口须选 105600。
+ * 勿把固件改成 105600（会叠偏差，线速约 96800）。有 HSE 后两端可统一 115200。
+ */
+#define PACER_DEBUG_USART1       1
+#define PACER_DEBUG_USART2       2
+#define CFG_DEBUG_UART_PORT      PACER_DEBUG_USART1
+#define CFG_DEBUG_UART_BAUD      115200
+
 /* ==================== 功能开关 ==================== */
 
 #define CFG_USE_MADGWICK           1      /* 1=Madgwick, 0=互补滤波 */
 #define CFG_ENABLE_CONSOLE_LOG     1      /* UART 调试打印 */
+#define CFG_UART_PLAIN_DEBUG       1      /* 1=联调模式；IMU+遥控验证通过后改 0 启飞控 */
+#define CFG_IMU_DEBUG              1      /* PLAIN_DEBUG 时周期打印 IMU/姿态 */
+#define CFG_IMU_DEBUG_HZ           10     /* IMU 调试输出频率 (Hz) */
+#define CFG_REMOTE_DEBUG           1      /* PLAIN_DEBUG 时监听 USART3 并打印遥控状态 */
+#define CFG_REMOTE_DEBUG_HZ        10     /* 遥控调试输出频率 (Hz) */
+
+/* 与 CFG_DEBUG_UART_PORT / CFG_DEBUG_UART_BAUD 相同，保留兼容旧引用 */
+#define CFG_DEBUG_UART             USART1
 
 /* ==================== 飞行阶段 ==================== */
 
@@ -154,7 +176,7 @@
 
 #define CFG_TASK_CTRL_STACK        1024    /* 控制任务栈 (字) */
 #define CFG_TASK_CTRL_PRIORITY     5       /* 控制任务优先级 (高) */
-#define CFG_TASK_TELEM_STACK       512     /* 遥测任务栈 */
+#define CFG_TASK_TELEM_STACK       1536    /* 遥测任务栈 (printf 浮点需要更大栈) */
 #define CFG_TASK_TELEM_PRIORITY    2       /* 遥测任务优先级 (低) */
 #define CFG_TASK_RX_STACK          512     /* 遥控接收任务栈 */
 #define CFG_TASK_RX_PRIORITY       4       /* 遥控接收任务优先级 */

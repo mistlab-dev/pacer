@@ -1,33 +1,43 @@
 /**
- * PACER ESP-NOW 机载端（飞机上的 ESP32）
+ * PACER ESP-NOW 机载端（飞机上的 ESP32 Mini / DevKit）
  *
- * ESP-NOW 收 19 字节遥控帧 → USART 转发给 STM32 USART3
+ * ESP-NOW 收 19 字节遥控帧 → UART 转发给 STM32 USART3
  *
  * 接线（ESP32 ↔ STM32 H743）:
- *   ESP TX  → PD9 (USART3_RX)
- *   ESP RX  → PD8 (USART3_TX)
- *   GND     → GND
+ *   ESP TX (GPIO17) → PD9 (USART3_RX)
+ *   ESP RX (GPIO16) → PD8 (USART3_TX)
+ *   GND             → GND
+ *   3.3V            → 3.3V（勿用 5V 进 STM32 RX）
  *
- * Arduino: 开发板选 ESP32 Dev Module，库 ESP32 by Espressif 2.x+
+ * ESP32 Mini 若无 16/17 引出，请改 UART_TX_PIN / UART_RX_PIN。
+ *
+ * Arduino: ESP32 Dev Module，库 ESP32 by Espressif 2.x+
  */
 
 #include <WiFi.h>
 #include <esp_now.h>
 #include "protocol.h"
 
-/* Serial2 → STM32 USART3 @ 115200 */
-#ifndef UART_TX_PIN
-#define UART_TX_PIN  17   /* 接 STM32 PD9 (RX) */
-#endif
-#ifndef UART_RX_PIN
-#define UART_RX_PIN  16   /* 接 STM32 PD8 (TX) */
+#if __has_include("mac_config.h")
+#include "mac_config.h"
 #endif
 
-/* 地面端 ESP32 的 MAC，烧录前改成 Serial Monitor 里看到的地址 */
+#ifndef UART_TX_PIN
+#define UART_TX_PIN  17
+#endif
+#ifndef UART_RX_PIN
+#define UART_RX_PIN  16
+#endif
+
+#ifdef PACER_GROUND_MAC
+uint8_t groundMac[] = PACER_GROUND_MAC;
+#else
 uint8_t groundMac[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
+#endif
 
 static uint32_t rxCount = 0;
 static uint32_t badCount = 0;
+static uint32_t uartTx = 0;
 
 static void handleFrame(const uint8_t *data, int len)
 {
@@ -35,7 +45,9 @@ static void handleFrame(const uint8_t *data, int len)
         badCount++;
         return;
     }
-    Serial2.write(data, PACER_FRAME_SIZE);
+    size_t n = Serial2.write(data, PACER_FRAME_SIZE);
+    if (n == PACER_FRAME_SIZE)
+        uartTx++;
     rxCount++;
 }
 
@@ -66,6 +78,8 @@ void setup()
     Serial.println("=== PACER ESP-NOW Air ===");
     Serial.print("Air MAC (copy to ground sketch): ");
     Serial.println(WiFi.macAddress());
+    Serial.printf("UART2 pins RX=%d TX=%d @115200 -> STM32 USART3\r\n",
+                  UART_RX_PIN, UART_TX_PIN);
 
     if (esp_now_init() != ESP_OK) {
         Serial.println("ESP-NOW init failed");
@@ -94,6 +108,9 @@ void loop()
     static uint32_t last = 0;
     if (millis() - last > 2000) {
         last = millis();
-        Serial.printf("fwd=%lu bad=%lu\r\n", (unsigned long)rxCount, (unsigned long)badCount);
+        Serial.printf("espnow_rx=%lu uart_tx=%lu bad=%lu\r\n",
+                      (unsigned long)rxCount,
+                      (unsigned long)uartTx,
+                      (unsigned long)badCount);
     }
 }

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"encoding/binary"
 	"flag"
 	"fmt"
@@ -8,6 +9,7 @@ import (
 	"math"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -48,6 +50,10 @@ func (c *RemoteCmd) Encode() []byte {
 	return buf
 }
 
+func (c *RemoteCmd) String() string {
+	return fmt.Sprintf("T=%.2f R=%.2f P=%.2f Y=%.2f", c.Throttle, c.Roll, c.Pitch, c.Yaw)
+}
+
 // RemoteController 遥控控制器
 type RemoteController struct {
 	port     serial.Port
@@ -55,6 +61,7 @@ type RemoteController struct {
 	baudRate int
 	cmd      RemoteCmd
 	running  bool
+	txCount  uint64
 }
 
 // NewRemoteController 创建遥控器
@@ -94,6 +101,7 @@ func (rc *RemoteController) SendCmd() error {
 	if n != frameSize {
 		return fmt.Errorf("write incomplete: %d/%d", n, frameSize)
 	}
+	rc.txCount++
 	return nil
 }
 
@@ -135,119 +143,197 @@ func clamp(v, min, max float32) float32 {
 
 // RunLoop 定时发送循环 (默认 50Hz)
 func (rc *RemoteController) RunLoop(freq int) {
- interval := time.Duration(1000/freq) * time.Millisecond
+	interval := time.Duration(1000/freq) * time.Millisecond
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
 
- ticker := time.NewTicker(interval)
- defer ticker.Stop()
-
- for rc.running {
-  select {
-  case <-ticker.C:
-   if err := rc.SendCmd(); err != nil {
-    log.Printf("send error: %v", err)
-   }
-  }
- }
+	for rc.running {
+		select {
+		case <-ticker.C:
+			if err := rc.SendCmd(); err != nil {
+				log.Printf("send error: %v", err)
+			}
+		}
+	}
 }
 
 func main() {
- portName := flag.String("port", "", "serial port device (e.g. COM3 on Windows, /dev/ttyUSB0 on Linux)")
- baudRate := flag.Int("baud", 115200, "serial baud rate")
- freq := flag.Int("freq", 50, "send frequency Hz")
- throttle := flag.Float64("t", 0, "initial throttle 0~1")
- roll := flag.Float64("r", 0, "initial roll -1~1")
- pitch := flag.Float64("p", 0, "initial pitch -1~1")
- yaw := flag.Float64("y", 0, "initial yaw -1~1")
- demo := flag.Bool("demo", false, "run demo mode (auto oscillate)")
- flag.Parse()
+	portName := flag.String("port", "", "serial port (COMx / /dev/ttyUSB0); ESP-NOW 时接地面 ESP 的 USB 口")
+	baudRate := flag.Int("baud", 115200, "serial baud rate")
+	freq := flag.Int("freq", 50, "send frequency Hz")
+	throttle := flag.Float64("t", 0, "initial throttle 0~1")
+	roll := flag.Float64("r", 0, "initial roll -1~1")
+	pitch := flag.Float64("p", 0, "initial pitch -1~1")
+	yaw := flag.Float64("y", 0, "initial yaw -1~1")
+	demo := flag.Bool("demo", false, "run demo mode (auto oscillate)")
+	interactive := flag.Bool("i", true, "interactive stdin commands (t+/r-/z/q)")
+	flag.Parse()
 
- if *portName == "" {
-  fmt.Println("Usage: pacer-remote -port <device> [options]")
-  fmt.Println("\nOptions:")
-  flag.PrintDefaults()
-  fmt.Println("\nExamples:")
-  fmt.Println("  Windows: pacer-remote -port COM3 -t 0.5")
-  fmt.Println("  Linux:   pacer-remote -port /dev/ttyUSB0 -t 0.3 -r 0.1")
-  fmt.Println("  Demo:    pacer-remote -port COM3 -demo")
-  os.Exit(1)
- }
+	if *portName == "" {
+		fmt.Println("Usage: pacer-remote -port <device> [options]")
+		fmt.Println("\nOptions:")
+		flag.PrintDefaults()
+		fmt.Println("\nExamples:")
+		fmt.Println("  直连飞控 USART3:  pacer-remote -port COM5")
+		fmt.Println("  ESP-NOW 地面端:   pacer-remote -port COM6 -demo")
+		fmt.Println("  固定油门测试:     pacer-remote -port COM6 -t 0 -i=false")
+		os.Exit(1)
+	}
 
- rc, err := NewRemoteController(*portName, *baudRate)
- if err != nil {
-  log.Fatalf("init remote controller: %v", err)
- }
- defer rc.Close()
+	rc, err := NewRemoteController(*portName, *baudRate)
+	if err != nil {
+		log.Fatalf("init remote controller: %v", err)
+	}
+	defer rc.Close()
 
- // 设置初始值
- rc.SetThrottle(float32(*throttle))
- rc.SetRoll(float32(*roll))
- rc.SetPitch(float32(*pitch))
- rc.SetYaw(float32(*yaw))
+	rc.SetThrottle(float32(*throttle))
+	rc.SetRoll(float32(*roll))
+	rc.SetPitch(float32(*pitch))
+	rc.SetYaw(float32(*yaw))
 
- log.Printf("Remote controller started: %s @ %d bps, %d Hz", *portName, *baudRate, *freq)
- log.Printf("Initial: T=%.2f R=%.2f P=%.2f Y=%.2f", *throttle, *roll, *pitch, *yaw)
+	log.Printf("Remote controller started: %s @ %d bps, %d Hz", *portName, *baudRate, *freq)
+	log.Printf("Initial: %s", rc.cmd.String())
 
- // 启动发送循环
- go rc.RunLoop(*freq)
+	go rc.RunLoop(*freq)
 
- // Demo 模式: 自动摇摆
- if *demo {
-  go runDemo(rc)
- }
+	if *demo {
+		go runDemo(rc)
+	}
 
- // 交互式控制
- runInteractive(rc)
+	if *interactive {
+		runInteractive(rc)
+	} else {
+		waitForSignal(rc)
+	}
+}
+
+func waitForSignal(rc *RemoteController) {
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	<-sigCh
+	shutdown(rc)
+}
+
+func shutdown(rc *RemoteController) {
+	fmt.Println("\nShutting down, sending zero frame...")
+	rc.Reset()
+	_ = rc.SendCmd()
+	rc.Close()
 }
 
 // runDemo 演示模式 - 自动摇摆
 func runDemo(rc *RemoteController) {
- t := 0.0
- for rc.running {
-  time.Sleep(50 * time.Millisecond)
-  t += 0.05
-
-  // 油门保持 0.5
-  rc.SetThrottle(0.5)
-
-  // 滚转周期性摇摆 ±0.3
-  rc.SetRoll(float32(0.3 * math.Sin(t)))
-
-  // 俯仰周期性摇摆 ±0.2
-  rc.SetPitch(float32(0.2 * math.Cos(t * 0.7)))
- }
-
- // 结束时归零
- rc.Reset()
+	t := 0.0
+	for rc.running {
+		time.Sleep(50 * time.Millisecond)
+		t += 0.05
+		rc.SetThrottle(0.0)
+		rc.SetRoll(float32(0.3 * math.Sin(t)))
+		rc.SetPitch(float32(0.2 * math.Cos(t*0.7)))
+		rc.SetYaw(float32(0.1 * math.Sin(t * 0.5)))
+	}
 }
 
-// runInteractive 交互式键盘控制
+// runInteractive 交互式命令行控制
 func runInteractive(rc *RemoteController) {
- fmt.Println("\n=== Interactive Control ===")
- fmt.Println("Commands:")
- fmt.Println("  t+/t- : throttle ±0.05")
- fmt.Println("  r+/r- : roll ±0.1")
- fmt.Println("  p+/p- : pitch ±0.1")
- fmt.Println("  y+/y- : yaw ±0.1")
- fmt.Println("  z     : reset all to zero")
- fmt.Println("  q     : quit")
- fmt.Println("============================")
+	fmt.Println()
+	fmt.Println("=== Interactive Control ===")
+	fmt.Println("  t+/t-  throttle ±0.05    T <value>  set throttle")
+	fmt.Println("  r+/r-  roll ±0.1         R <value>  set roll")
+	fmt.Println("  p+/p-  pitch ±0.1        P <value>  set pitch")
+	fmt.Println("  y+/y-  yaw ±0.1          Y <value>  set yaw")
+	fmt.Println("  z      reset all         s          show current")
+	fmt.Println("  q      quit")
+	fmt.Println("============================")
 
- sigCh := make(chan os.Signal, 1)
- signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 
- // 简化的命令读取 (实际应用可用 golang.org/x/term 实现真正的终端控制)
- for {
-  select {
-  case <-sigCh:
-   fmt.Println("\nInterrupt received, shutting down...")
-   rc.Reset()
-   rc.SendCmd()
-   rc.Close()
-   return
-  default:
-   // 这里需要真正的键盘读取实现
-   // 简化版只响应 Ctrl+C
-   time.Sleep(100 * time.Millisecond)
-  }
- }
+	go func() {
+		<-sigCh
+		shutdown(rc)
+		os.Exit(0)
+	}()
+
+	go func() {
+		ticker := time.NewTicker(3 * time.Second)
+		defer ticker.Stop()
+		for rc.running {
+			<-ticker.C
+			log.Printf("tx=%d  %s", rc.txCount, rc.cmd.String())
+		}
+	}()
+
+	scanner := bufio.NewScanner(os.Stdin)
+	for scanner.Scan() {
+		if !rc.running {
+			break
+		}
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		parts := strings.Fields(line)
+		cmd := strings.ToLower(parts[0])
+
+		switch cmd {
+		case "q", "quit", "exit":
+			shutdown(rc)
+			os.Exit(0)
+		case "z", "reset":
+			rc.Reset()
+			fmt.Println("reset to zero")
+		case "s", "status":
+			fmt.Println(rc.cmd.String(), "tx=", rc.txCount)
+		case "t+":
+			rc.SetThrottle(rc.cmd.Throttle + 0.05)
+		case "t-":
+			rc.SetThrottle(rc.cmd.Throttle - 0.05)
+		case "r+":
+			rc.SetRoll(rc.cmd.Roll + 0.1)
+		case "r-":
+			rc.SetRoll(rc.cmd.Roll - 0.1)
+		case "p+":
+			rc.SetPitch(rc.cmd.Pitch + 0.1)
+		case "p-":
+			rc.SetPitch(rc.cmd.Pitch - 0.1)
+		case "y+":
+			rc.SetYaw(rc.cmd.Yaw + 0.1)
+		case "y-":
+			rc.SetYaw(rc.cmd.Yaw - 0.1)
+		case "t", "throttle":
+			if len(parts) < 2 {
+				fmt.Println("usage: T <0~1>")
+				continue
+			}
+			var v float32
+			fmt.Sscanf(parts[1], "%f", &v)
+			rc.SetThrottle(v)
+		case "r", "roll":
+			if len(parts) < 2 {
+				continue
+			}
+			var v float32
+			fmt.Sscanf(parts[1], "%f", &v)
+			rc.SetRoll(v)
+		case "p", "pitch":
+			if len(parts) < 2 {
+				continue
+			}
+			var v float32
+			fmt.Sscanf(parts[1], "%f", &v)
+			rc.SetPitch(v)
+		case "y", "yaw":
+			if len(parts) < 2 {
+				continue
+			}
+			var v float32
+			fmt.Sscanf(parts[1], "%f", &v)
+			rc.SetYaw(v)
+		default:
+			fmt.Println("unknown command:", line)
+			continue
+		}
+		fmt.Println("->", rc.cmd.String())
+	}
 }

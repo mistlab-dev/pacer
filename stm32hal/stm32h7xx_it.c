@@ -8,6 +8,7 @@
  */
 
 #include "stm32h7xx_hal.h"
+#include "app/config.h"
 #include "FreeRTOS.h"
 #include "task.h"
 #include <string.h>
@@ -99,11 +100,20 @@ void vApplicationMallocFailedHook(void)
     for (;;);
 }
 
-/* ============ USART2 全局中断 (CLI) ============ */
+/* ============ 调试 UART 全局中断 (CLI) ============ */
+
+void USART1_IRQHandler(void)
+{
+#if (CFG_DEBUG_UART_PORT == PACER_DEBUG_USART1)
+    HAL_UART_IRQHandler(&huart2);
+#endif
+}
 
 void USART2_IRQHandler(void)
 {
+#if (CFG_DEBUG_UART_PORT == PACER_DEBUG_USART2)
     HAL_UART_IRQHandler(&huart2);
+#endif
 }
 
 /* ============ USART3 全局中断 (遥控接收) ============ */

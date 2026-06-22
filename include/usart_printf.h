@@ -13,11 +13,15 @@
 #define USART_PRINTF_H
 
 #include <stdio.h>
+#include <stdint.h>
 
 /**
  * @brief 初始化调试 UART
  * 配置 USART2, 重定向 stdout
  */
 void usart_printf_init(void);
+void usart_debug_nvic_enable(void);
+void uart_write_bytes(const uint8_t *buf, uint16_t len);
+void uart_puts(const char *s);
 
 #endif /* USART_PRINTF_H */
